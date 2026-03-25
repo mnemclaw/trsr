@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS postgis;
-
 CREATE TABLE IF NOT EXISTS users (
   id           TEXT PRIMARY KEY,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -15,7 +13,6 @@ CREATE TABLE IF NOT EXISTS drops (
   lat          DOUBLE PRECISION NOT NULL,
   lng          DOUBLE PRECISION NOT NULL,
   geohash      VARCHAR(12) NOT NULL,
-  location     GEOGRAPHY(POINT, 4326) NOT NULL,
   owner_id     TEXT NOT NULL REFERENCES users(id),
   upvotes      INTEGER NOT NULL DEFAULT 0,
   downvotes    INTEGER NOT NULL DEFAULT 0,
@@ -24,8 +21,8 @@ CREATE TABLE IF NOT EXISTS drops (
   status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','expired'))
 );
 
-CREATE INDEX drops_location_idx ON drops USING GIST (location);
-CREATE INDEX drops_expires_at_idx ON drops (expires_at) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS drops_lat_lng_idx ON drops (lat, lng) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS drops_expires_at_idx ON drops (expires_at) WHERE status = 'active';
 
 CREATE TABLE IF NOT EXISTS votes (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),

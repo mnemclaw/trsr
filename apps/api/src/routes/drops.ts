@@ -54,8 +54,8 @@ export async function dropRoutes(fastify: FastifyInstance, opts: { io: Server })
     );
 
     const result = await pool.query(
-      `INSERT INTO drops (text, link, image_cid, lat, lng, geohash, location, owner_id)
-       VALUES ($1, $2, $3, $4, $5, $6, ST_SetSRID(ST_MakePoint($5, $4), 4326)::geography, $7)
+      `INSERT INTO drops (text, link, image_cid, lat, lng, geohash, owner_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [text, link ?? null, imageCid ?? null, lat, lng, geohash, ownerId],
     );
@@ -71,12 +71,13 @@ export async function dropRoutes(fastify: FastifyInstance, opts: { io: Server })
 
     const result = await pool.query(
       `SELECT * FROM drops
-       WHERE ST_Intersects(location, ST_MakeEnvelope($1, $2, $3, $4, 4326)::geography)
+       WHERE lat BETWEEN $1 AND $2
+         AND lng BETWEEN $3 AND $4
          AND status = 'active'
          AND expires_at > now()
        ORDER BY created_at DESC
        LIMIT 200`,
-      [minLng, minLat, maxLng, maxLat],
+      [minLat, maxLat, minLng, maxLng],
     );
 
     const drops = (result.rows as Record<string, unknown>[]).map(rowToDrop);
