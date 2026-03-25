@@ -3,8 +3,12 @@ import cors from '@fastify/cors';
 import { Server } from 'socket.io';
 import { dropRoutes } from './routes/drops.js';
 import { startExpiryJob } from './jobs/expiry.js';
+import { runMigrations } from './migrate.js';
 
 const fastify = Fastify({ logger: true });
+
+// Run DB migrations on startup (idempotent — uses IF NOT EXISTS)
+await runMigrations();
 
 await fastify.register(cors, { origin: '*' });
 
