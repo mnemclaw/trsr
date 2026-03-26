@@ -17,7 +17,7 @@ export async function runMigrations(): Promise<void> {
       return;
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
-      const isTransient = code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === '57P03';
+      const isTransient = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNRESET', '57P03', '08006', '08001'].includes(code ?? '');
       if (isTransient && attempt < 10) {
         console.log(`Migration attempt ${attempt} failed (DB not ready), retrying in 3s...`);
         await new Promise((r) => setTimeout(r, 3000));
