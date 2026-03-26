@@ -78,13 +78,17 @@ function MapWithDrops({ position }: { position: Position }) {
   );
 }
 
+// Default fallback centre — world view
+const DEFAULT_POSITION: Position = { lat: 48.8566, lng: 2.3522 };
+
 export default function MapView() {
   const [position, setPosition] = useState<Position | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [locationWarning, setLocationWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (!navigator.geolocation) {
-      setError('Geolocation is not supported by your browser.');
+      setLocationWarning('Geolocation not supported — showing default map centre.');
+      setPosition(DEFAULT_POSITION);
       return;
     }
 
@@ -93,26 +97,42 @@ export default function MapView() {
         setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
       },
       () => {
-        setError('Location access denied. Enable location permissions to use trsr.');
+        setLocationWarning('Location access denied — pan the map to your location to drop.');
+        setPosition(DEFAULT_POSITION);
       },
     );
   }, []);
 
-  if (error) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white">
-        <p className="text-red-400">{error}</p>
-      </div>
-    );
-  }
-
   if (!position) {
     return (
       <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white">
-        <p className="text-slate-400">Loading location…</p>
+        <p className="text-slate-400">Loading…</p>
       </div>
     );
   }
 
-  return <MapWithDrops position={position} />;
+  return (
+    <>
+      {locationWarning && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '12px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 3000,
+            background: '#1e293b',
+            color: '#fbbf24',
+            borderRadius: '8px',
+            padding: '8px 16px',
+            fontSize: '13px',
+            pointerEvents: 'none',
+          }}
+        >
+          {locationWarning}
+        </div>
+      )}
+      <MapWithDrops position={position} />
+    </>
+  );
 }
