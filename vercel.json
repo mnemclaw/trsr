@@ -2,5 +2,15 @@
   "installCommand": "pnpm install",
   "buildCommand": "pnpm --filter @trsr/web build",
   "outputDirectory": "apps/web/dist",
-  "framework": "vite"
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://trsr-production.up.railway.app/api/:path*"
+    },
+    {
+      "source": "/socket.io/:path*",
+      "destination": "https://trsr-production.up.railway.app/socket.io/:path*"
+    }
+  ]
 }

@@ -7,5 +7,6 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint"
   },
-  "engines": { "node": ">=20.0.0", "pnpm": ">=9.0.0" }
+  "engines": { "node": ">=20.0.0", "pnpm": ">=9.0.0" },
+  "packageManager": "pnpm@10.6.5"
 }
