@@ -1,241 +1,311 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Map as LeafletMap } from 'leaflet';
-import L from 'leaflet';
-import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-import { MapContainer, TileLayer, useMap } from 'react-leaflet';
-import { DropMarkers } from '../components/DropMarkers.js';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { DropCard } from '../components/DropCard.js';
 import { CreateDropButton } from '../components/CreateDropButton.js';
 import { useDropSocket } from '../hooks/useDropSocket.js';
-import { useDropLayer } from '../hooks/useDropLayer.js';
+import { useDropsStore } from '../store/drops.js';
+import { fetchDropsInBbox } from '../api/drops.js';
+import { dropAgeState, DROP_AGE_COLOURS } from '@trsr/types';
+import type { Drop } from '@trsr/types';
 
-delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)['_getIconUrl'];
-L.Icon.Default.mergeOptions({
-  iconUrl: markerIcon,
-  iconRetinaUrl: markerIcon2x,
-  shadowUrl: markerShadow,
-});
+// ---------------------------------------------------------------------------
+// Tile style — CartoDB Voyager raster tiles
+// ---------------------------------------------------------------------------
+const RASTER_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    'carto-voyager': {
+      type: 'raster',
+      tiles: [
+        'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+        'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+        'https://d.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+      ],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors © CARTO',
+    },
+  },
+  layers: [{ id: 'carto-voyager', type: 'raster', source: 'carto-voyager' }],
+};
 
-interface Position {
-  lat: number;
-  lng: number;
+// ---------------------------------------------------------------------------
+// Default fallback centre — Paris
+// ---------------------------------------------------------------------------
+const DEFAULT_LNG = 2.3522;
+const DEFAULT_LAT = 48.8566;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function markerColor(drop: Drop, selectedDropId: string | null): string {
+  if (drop.id === selectedDropId) return '#5CF401';
+  const age = dropAgeState(drop.createdAt);
+  return DROP_AGE_COLOURS[age];
 }
 
-interface UserPosition extends Position {
-  heading: number | null;
+function markerOpacity(drop: Drop): number {
+  return dropAgeState(drop.createdAt) === 'stale' ? 0.4 : 0.8;
 }
 
-function createUserLocationIcon(heading: number | null): L.DivIcon {
-  const hasHeading = heading !== null && !isNaN(heading);
-  const arrowHtml = hasHeading
-    ? `<div class="user-location-arrow" style="transform: rotate(${heading}deg)"></div>`
-    : '';
-
-  return L.divIcon({
-    className: '',
-    html: `
-      <div class="user-location-wrapper">
-        <div class="user-location-pulse"></div>
-        <div class="user-location-dot"></div>
-        ${arrowHtml}
-      </div>
-    `,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
-  });
+function markerRadius(drop: Drop): number {
+  const netVotes = drop.upvotes - drop.downvotes;
+  return 8 + Math.min(netVotes, 10) * 0.5;
 }
 
-function UserLocationMarker({ position }: { position: UserPosition }) {
-  const map = useMap();
-  const markerRef = useRef<L.Marker | null>(null);
-  const isFirstFix = useRef(true);
-  const userInteracting = useRef(false);
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+export default function MapView() {
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
 
-  // Track user interaction to avoid fighting manual panning
-  useEffect(() => {
-    const onMoveStart = () => { userInteracting.current = true; };
-    const onMoveEnd = () => { userInteracting.current = false; };
-    map.on('mousedown', onMoveStart);
-    map.on('touchstart', onMoveStart);
-    map.on('moveend', onMoveEnd);
-    return () => {
-      map.off('mousedown', onMoveStart);
-      map.off('touchstart', onMoveStart);
-      map.off('moveend', onMoveEnd);
-    };
-  }, [map]);
+  // Drop markers: id → Marker
+  const dropMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+  // User location marker
+  const userMarkerRef = useRef<maplibregl.Marker | null>(null);
 
-  useEffect(() => {
-    const icon = createUserLocationIcon(position.heading);
-    if (!markerRef.current) {
-      markerRef.current = L.marker([position.lat, position.lng], {
-        icon,
-        zIndexOffset: 1000,
-      }).addTo(map);
-    } else {
-      markerRef.current.setLatLng([position.lat, position.lng]);
-      markerRef.current.setIcon(icon);
+  const [locationWarning, setLocationWarning] = useState<string | null>(null);
+  const [compassGranted, setCompassGranted] = useState(false);
+  const [showCompassButton, setShowCompassButton] = useState(false);
+
+  // Store
+  const drops = useDropsStore((s) => s.drops);
+  const selectedDropId = useDropsStore((s) => s.selectedDropId);
+  const setSelectedDropId = useDropsStore((s) => s.setSelectedDropId);
+  const upsertDrop = useDropsStore((s) => s.upsertDrop);
+  const removeDrop = useDropsStore((s) => s.removeDrop);
+
+  // Socket (handles drop:created / drop:updated / drop:expired)
+  useDropSocket();
+
+  // ---------------------------------------------------------------------------
+  // Fetch drops for current map bounds
+  // ---------------------------------------------------------------------------
+  const fetchDrops = useCallback(async (map: maplibregl.Map) => {
+    const bounds = map.getBounds();
+    try {
+      const result = await fetchDropsInBbox({
+        minLat: bounds.getSouth(),
+        maxLat: bounds.getNorth(),
+        minLng: bounds.getWest(),
+        maxLng: bounds.getEast(),
+      });
+      for (const d of result) upsertDrop(d);
+    } catch {
+      // silently ignore fetch errors
     }
-    return () => {
-      if (markerRef.current) {
-        markerRef.current.remove();
-        markerRef.current = null;
+  }, [upsertDrop]);
+
+  // ---------------------------------------------------------------------------
+  // Compass handler
+  // ---------------------------------------------------------------------------
+  const handleOrientation = useCallback((e: DeviceOrientationEvent) => {
+    const map = mapRef.current;
+    if (!map || e.alpha === null) return;
+    map.setBearing(e.alpha);
+  }, []);
+
+  const attachCompassListeners = useCallback(() => {
+    window.addEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
+    // Fallback for browsers that only fire 'deviceorientation'
+    window.addEventListener('deviceorientation', handleOrientation as EventListener, true);
+    setCompassGranted(true);
+    setShowCompassButton(false);
+  }, [handleOrientation]);
+
+  const requestCompassPermission = useCallback(async () => {
+    const DOE = DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<string>;
+    };
+    if (typeof DOE.requestPermission === 'function') {
+      try {
+        const perm = await DOE.requestPermission();
+        if (perm === 'granted') {
+          attachCompassListeners();
+        }
+      } catch {
+        // permission denied — compass unavailable
       }
+    } else {
+      attachCompassListeners();
+    }
+  }, [attachCompassListeners]);
+
+  // ---------------------------------------------------------------------------
+  // Initialise map
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: RASTER_STYLE,
+      center: [DEFAULT_LNG, DEFAULT_LAT],
+      zoom: 17,
+      pitch: 50,
+      bearing: 0,
+      interactive: false,       // all pan/zoom/rotate disabled — navigation only
+      attributionControl: false,
+    });
+
+    mapRef.current = map;
+
+    map.on('load', () => {
+      void fetchDrops(map);
+    });
+
+    map.on('moveend', () => {
+      void fetchDrops(map);
+    });
+
+    // Create user location marker (static dot — heading shown via map bearing)
+    const userEl = document.createElement('div');
+    userEl.className = 'user-location-wrapper';
+    userEl.innerHTML = `
+      <div class="user-location-pulse"></div>
+      <div class="user-location-dot"></div>
+    `;
+    const userMarker = new maplibregl.Marker({ element: userEl, anchor: 'center' })
+      .setLngLat([DEFAULT_LNG, DEFAULT_LAT])
+      .addTo(map);
+    userMarkerRef.current = userMarker;
+
+    // GPS tracking
+    if (!navigator.geolocation) {
+      setLocationWarning('Geolocation not supported — showing default map centre.');
+    } else {
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const { latitude: lat, longitude: lng } = pos.coords;
+          map.jumpTo({ center: [lng, lat] });
+          userMarkerRef.current?.setLngLat([lng, lat]);
+
+          // Show compass button on first GPS fix (iOS needs user gesture)
+          if (!compassGranted) {
+            const DOE = DeviceOrientationEvent as unknown as {
+              requestPermission?: () => Promise<string>;
+            };
+            if (typeof DOE.requestPermission === 'function') {
+              setShowCompassButton(true);
+            } else {
+              // Non-iOS: attach immediately
+              attachCompassListeners();
+            }
+          }
+        },
+        () => {
+          setLocationWarning('Location access denied — map showing default centre.');
+        },
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 },
+      );
+
+      return () => {
+        navigator.geolocation.clearWatch(watchId);
+        window.removeEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
+        window.removeEventListener('deviceorientation', handleOrientation as EventListener, true);
+        map.remove();
+        mapRef.current = null;
+      };
+    }
+
+    return () => {
+      window.removeEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
+      window.removeEventListener('deviceorientation', handleOrientation as EventListener, true);
+      map.remove();
+      mapRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Sync drop markers whenever the store updates
+  // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!markerRef.current) return;
-    markerRef.current.setLatLng([position.lat, position.lng]);
-    markerRef.current.setIcon(createUserLocationIcon(position.heading));
-  }, [position]);
+    const map = mapRef.current;
+    if (!map) return;
 
-  // Center map on user position: flyTo on first fix, panTo on subsequent updates
-  useEffect(() => {
-    const latlng: [number, number] = [position.lat, position.lng];
-    if (isFirstFix.current) {
-      map.flyTo(latlng, 15);
-      isFirstFix.current = false;
-    } else if (!userInteracting.current) {
-      map.panTo(latlng);
-    }
-  }, [map, position]);
+    const currentIds = new Set(Object.keys(drops));
+    const existingIds = dropMarkersRef.current;
 
-  return null;
-}
-
-// Inner component that has access to the map instance via hook
-function MapEffects({
-  onMapReady,
-}: {
-  onMapReady: (map: LeafletMap) => void;
-}) {
-  const map = useMap();
-
-  useEffect(() => {
-    onMapReady(map);
-  }, [map, onMapReady]);
-
-  return null;
-}
-
-function MapWithDrops({
-  position,
-  userPosition,
-}: {
-  position: Position;
-  userPosition: UserPosition | null;
-}) {
-  const [map, setMap] = useState<LeafletMap | null>(null);
-  const mapRef = useRef<LeafletMap | null>(null);
-
-  const handleMapReady = useCallback((m: LeafletMap) => {
-    mapRef.current = m;
-    setMap(m);
-  }, []);
-
-  useDropSocket();
-  useDropLayer(map);
-
-  const getMapCenter = useCallback(() => {
-    if (mapRef.current) {
-      const center = mapRef.current.getCenter();
-      return { lat: center.lat, lng: center.lng };
-    }
-    return { lat: position.lat, lng: position.lng };
-  }, [position]);
-
-  return (
-    <>
-      <MapContainer
-        center={[position.lat, position.lng]}
-        zoom={15}
-        className="h-screen w-full"
-      >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-        />
-        <DropMarkers />
-        <MapEffects onMapReady={handleMapReady} />
-        {userPosition && <UserLocationMarker position={userPosition} />}
-      </MapContainer>
-      <DropCard />
-      <CreateDropButton getMapCenter={getMapCenter} />
-    </>
-  );
-}
-
-// Default fallback centre — world view
-const DEFAULT_POSITION: Position = { lat: 48.8566, lng: 2.3522 };
-
-export default function MapView() {
-  const [position, setPosition] = useState<Position | null>(null);
-  const [userPosition, setUserPosition] = useState<UserPosition | null>(null);
-  const [locationWarning, setLocationWarning] = useState<string | null>(null);
-  const watchIdRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setLocationWarning('Geolocation not supported — showing default map centre.');
-      setPosition(DEFAULT_POSITION);
-      return;
-    }
-
-    // Get initial position to set map centre immediately
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setPosition(p);
-        setUserPosition({ ...p, heading: pos.coords.heading });
-      },
-      () => {
-        setLocationWarning('Location access denied — pan the map to your location to drop.');
-        setPosition(DEFAULT_POSITION);
-      },
-    );
-
-    // Watch for real-time position and heading updates
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const p = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          heading: pos.coords.heading,
-        };
-        setUserPosition(p);
-        setPosition((prev) => prev ?? { lat: p.lat, lng: p.lng });
-      },
-      () => {
-        // Non-fatal — map stays centred on last known position
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 10000,
-      },
-    );
-
-    return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
+    // Remove expired markers
+    for (const [id, marker] of existingIds.entries()) {
+      if (!currentIds.has(id)) {
+        marker.remove();
+        existingIds.delete(id);
       }
-    };
+    }
+
+    // Add or update markers
+    for (const drop of Object.values(drops)) {
+      const color = markerColor(drop, selectedDropId);
+      const opacity = markerOpacity(drop);
+      const radius = markerRadius(drop);
+
+      const existing = existingIds.get(drop.id);
+      if (existing) {
+        // Update element style in place
+        const el = existing.getElement();
+        el.style.background = color;
+        el.style.opacity = String(opacity);
+        const size = `${radius * 2}px`;
+        el.style.width = size;
+        el.style.height = size;
+        el.style.marginLeft = `-${radius}px`;
+        el.style.marginTop = `-${radius}px`;
+        existing.setLngLat([drop.lng, drop.lat]);
+      } else {
+        const el = document.createElement('div');
+        el.className = 'drop-marker';
+        el.style.cssText = [
+          `width:${radius * 2}px`,
+          `height:${radius * 2}px`,
+          `margin-left:-${radius}px`,
+          `margin-top:-${radius}px`,
+          'border-radius:50%',
+          `background:${color}`,
+          'border:2px solid white',
+          `opacity:${opacity}`,
+          'cursor:pointer',
+          'box-shadow:0 2px 6px rgba(0,0,0,0.35)',
+        ].join(';');
+
+        el.addEventListener('click', () => {
+          setSelectedDropId(drop.id);
+        });
+
+        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([drop.lng, drop.lat])
+          .addTo(map);
+
+        existingIds.set(drop.id, marker);
+      }
+    }
+  }, [drops, selectedDropId, setSelectedDropId]);
+
+  // Expose removeDrop to silence the linter (socket hook calls it via store)
+  void removeDrop;
+
+  // ---------------------------------------------------------------------------
+  // getMapCenter for CreateDropButton (user's GPS position = map centre)
+  // ---------------------------------------------------------------------------
+  const getMapCenter = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return { lat: DEFAULT_LAT, lng: DEFAULT_LNG };
+    const c = map.getCenter();
+    return { lat: c.lat, lng: c.lng };
   }, []);
 
-  if (!position) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center" style={{ background: 'var(--color-cream)' }}>
-        <p style={{ color: '#888' }}>Loading…</p>
-      </div>
-    );
-  }
-
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <>
+      {/* Map canvas */}
+      <div ref={mapContainerRef} style={{ position: 'fixed', inset: 0, zIndex: 0 }} />
+
+      {/* Warnings */}
       {locationWarning && (
         <div
           style={{
@@ -250,12 +320,41 @@ export default function MapView() {
             padding: '8px 16px',
             fontSize: '13px',
             pointerEvents: 'none',
+            whiteSpace: 'nowrap',
           }}
         >
           {locationWarning}
         </div>
       )}
-      <MapWithDrops position={position} userPosition={userPosition} />
+
+      {/* iOS compass permission button — auto-hides after grant */}
+      {showCompassButton && !compassGranted && (
+        <button
+          onClick={() => void requestCompassPermission()}
+          style={{
+            position: 'fixed',
+            top: '16px',
+            right: '16px',
+            zIndex: 3000,
+            background: 'var(--color-cream)',
+            color: '#1a1a1a',
+            border: 'none',
+            borderRadius: '8px',
+            padding: '8px 14px',
+            fontSize: '13px',
+            cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          }}
+        >
+          Enable compass
+        </button>
+      )}
+
+      {/* Drop card overlay */}
+      <DropCard />
+
+      {/* Create drop button */}
+      <CreateDropButton getMapCenter={getMapCenter} />
     </>
   );
 }

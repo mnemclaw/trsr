@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
-/* Leaflet default styles */
-@import "leaflet/dist/leaflet.css";
+/* MapLibre GL JS default styles */
+@import "maplibre-gl/dist/maplibre-gl.css";
 
 /* Twilight palette */
 :root {
