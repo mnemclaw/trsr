@@ -45,6 +45,7 @@ export function DropCard() {
       style={{
         position: 'fixed',
         bottom: 0,
+paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         left: 0,
         right: 0,
         zIndex: 1000,
