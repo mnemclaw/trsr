@@ -50,6 +50,22 @@ function createUserLocationIcon(heading: number | null): L.DivIcon {
 function UserLocationMarker({ position }: { position: UserPosition }) {
   const map = useMap();
   const markerRef = useRef<L.Marker | null>(null);
+  const isFirstFix = useRef(true);
+  const userInteracting = useRef(false);
+
+  // Track user interaction to avoid fighting manual panning
+  useEffect(() => {
+    const onMoveStart = () => { userInteracting.current = true; };
+    const onMoveEnd = () => { userInteracting.current = false; };
+    map.on('mousedown', onMoveStart);
+    map.on('touchstart', onMoveStart);
+    map.on('moveend', onMoveEnd);
+    return () => {
+      map.off('mousedown', onMoveStart);
+      map.off('touchstart', onMoveStart);
+      map.off('moveend', onMoveEnd);
+    };
+  }, [map]);
 
   useEffect(() => {
     const icon = createUserLocationIcon(position.heading);
@@ -76,6 +92,17 @@ function UserLocationMarker({ position }: { position: UserPosition }) {
     markerRef.current.setLatLng([position.lat, position.lng]);
     markerRef.current.setIcon(createUserLocationIcon(position.heading));
   }, [position]);
+
+  // Center map on user position: flyTo on first fix, panTo on subsequent updates
+  useEffect(() => {
+    const latlng: [number, number] = [position.lat, position.lng];
+    if (isFirstFix.current) {
+      map.flyTo(latlng, 15);
+      isFirstFix.current = false;
+    } else if (!userInteracting.current) {
+      map.panTo(latlng);
+    }
+  }, [map, position]);
 
   return null;
 }
