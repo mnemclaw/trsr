@@ -104,7 +104,7 @@ export default function MapView() {
   const handleOrientation = useCallback((e: DeviceOrientationEvent) => {
     const map = mapRef.current;
     if (!map || e.alpha === null) return;
-    map.setBearing(e.alpha);
+    map.setBearing(360 - e.alpha);
   }, []);
 
   const attachCompassListeners = useCallback(() => {
