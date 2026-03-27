@@ -23,6 +23,63 @@ interface Position {
   lng: number;
 }
 
+interface UserPosition extends Position {
+  heading: number | null;
+}
+
+function createUserLocationIcon(heading: number | null): L.DivIcon {
+  const hasHeading = heading !== null && !isNaN(heading);
+  const arrowHtml = hasHeading
+    ? `<div class="user-location-arrow" style="transform: rotate(${heading}deg)"></div>`
+    : '';
+
+  return L.divIcon({
+    className: '',
+    html: `
+      <div class="user-location-wrapper">
+        <div class="user-location-pulse"></div>
+        <div class="user-location-dot"></div>
+        ${arrowHtml}
+      </div>
+    `,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+  });
+}
+
+function UserLocationMarker({ position }: { position: UserPosition }) {
+  const map = useMap();
+  const markerRef = useRef<L.Marker | null>(null);
+
+  useEffect(() => {
+    const icon = createUserLocationIcon(position.heading);
+    if (!markerRef.current) {
+      markerRef.current = L.marker([position.lat, position.lng], {
+        icon,
+        zIndexOffset: 1000,
+      }).addTo(map);
+    } else {
+      markerRef.current.setLatLng([position.lat, position.lng]);
+      markerRef.current.setIcon(icon);
+    }
+    return () => {
+      if (markerRef.current) {
+        markerRef.current.remove();
+        markerRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!markerRef.current) return;
+    markerRef.current.setLatLng([position.lat, position.lng]);
+    markerRef.current.setIcon(createUserLocationIcon(position.heading));
+  }, [position]);
+
+  return null;
+}
+
 // Inner component that has access to the map instance via hook
 function MapEffects({
   onMapReady,
@@ -38,7 +95,13 @@ function MapEffects({
   return null;
 }
 
-function MapWithDrops({ position }: { position: Position }) {
+function MapWithDrops({
+  position,
+  userPosition,
+}: {
+  position: Position;
+  userPosition: UserPosition | null;
+}) {
   const [map, setMap] = useState<LeafletMap | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
 
@@ -71,6 +134,7 @@ function MapWithDrops({ position }: { position: Position }) {
         />
         <DropMarkers />
         <MapEffects onMapReady={handleMapReady} />
+        {userPosition && <UserLocationMarker position={userPosition} />}
       </MapContainer>
       <DropCard />
       <CreateDropButton getMapCenter={getMapCenter} />
@@ -83,7 +147,9 @@ const DEFAULT_POSITION: Position = { lat: 48.8566, lng: 2.3522 };
 
 export default function MapView() {
   const [position, setPosition] = useState<Position | null>(null);
+  const [userPosition, setUserPosition] = useState<UserPosition | null>(null);
   const [locationWarning, setLocationWarning] = useState<string | null>(null);
+  const watchIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!navigator.geolocation) {
@@ -92,15 +158,45 @@ export default function MapView() {
       return;
     }
 
+    // Get initial position to set map centre immediately
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setPosition(p);
+        setUserPosition({ ...p, heading: pos.coords.heading });
       },
       () => {
         setLocationWarning('Location access denied — pan the map to your location to drop.');
         setPosition(DEFAULT_POSITION);
       },
     );
+
+    // Watch for real-time position and heading updates
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const p = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          heading: pos.coords.heading,
+        };
+        setUserPosition(p);
+        setPosition((prev) => prev ?? { lat: p.lat, lng: p.lng });
+      },
+      () => {
+        // Non-fatal — map stays centred on last known position
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 10000,
+      },
+    );
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
   }, []);
 
   if (!position) {
@@ -132,7 +228,7 @@ export default function MapView() {
           {locationWarning}
         </div>
       )}
-      <MapWithDrops position={position} />
+      <MapWithDrops position={position} userPosition={userPosition} />
     </>
   );
 }
