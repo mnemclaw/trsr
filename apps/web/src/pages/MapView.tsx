@@ -214,8 +214,8 @@ export default function MapView() {
       },
       {
         enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 5000,
+        maximumAge: 1000,
+        timeout: 10000,
       },
     );
 
