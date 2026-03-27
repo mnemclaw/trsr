@@ -65,6 +65,8 @@ export default function MapView() {
   const dropMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
   // User location marker
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
+  // Compass heading from DeviceOrientationEvent (degrees, clockwise from north)
+  const compassHeadingRef = useRef<number | null>(null);
 
   const [locationWarning, setLocationWarning] = useState<string | null>(null);
   const [compassGranted, setCompassGranted] = useState(false);
@@ -103,8 +105,23 @@ export default function MapView() {
   // ---------------------------------------------------------------------------
   const handleOrientation = useCallback((e: DeviceOrientationEvent) => {
     const map = mapRef.current;
-    if (!map || e.alpha === null) return;
-    map.setBearing(360 - e.alpha);
+    // On iOS, webkitCompassHeading gives a true magnetic bearing (0–360, clockwise
+    // from north) that works even when stationary.  On Android/other, alpha is
+    // counterclockwise so we invert it.
+    const webkitHeading = (e as unknown as { webkitCompassHeading?: number }).webkitCompassHeading;
+    let heading: number;
+    if (typeof webkitHeading === 'number') {
+      // iOS true compass heading — use directly
+      heading = webkitHeading;
+    } else {
+      if (e.alpha === null) return;
+      // Non-iOS: alpha is counterclockwise from arbitrary zero, invert to clockwise
+      heading = 360 - e.alpha;
+    }
+    compassHeadingRef.current = heading;
+    if (map) {
+      map.setBearing(heading);
+    }
   }, []);
 
   const attachCompassListeners = useCallback(() => {
@@ -179,7 +196,9 @@ export default function MapView() {
       const watchId = navigator.geolocation.watchPosition(
         (pos) => {
           const { latitude: lat, longitude: lng } = pos.coords;
-          map.jumpTo({ center: [lng, lat] });
+          // Prefer DeviceOrientation compass heading; fall back to GPS travel heading
+          const heading = compassHeadingRef.current ?? pos.coords.heading ?? undefined;
+          map.jumpTo({ center: [lng, lat], ...(heading !== undefined && !compassGranted ? { bearing: heading } : {}) });
           userMarkerRef.current?.setLngLat([lng, lat]);
 
           // Show compass button on first GPS fix (iOS needs user gesture)
