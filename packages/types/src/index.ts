@@ -1,6 +1,6 @@
 export type DropStatus = 'active' | 'expired';
 export type VoteType = 'up' | 'down';
-export type DropAge = 'new' | 'healthy' | 'fading' | 'critical';
+export type DropAge = 'fresh' | 'recent' | 'mid' | 'old' | 'stale';
 
 export interface Drop {
   id: string;
@@ -48,19 +48,21 @@ export interface BboxQuery {
   maxLng: number;
 }
 
-// Helper: compute drop age state from expiresAt
-export function dropAgeState(expiresAt: string): DropAge {
-  const msLeft = new Date(expiresAt).getTime() - Date.now();
-  const daysLeft = msLeft / (1000 * 60 * 60 * 24);
-  if (daysLeft > 5) return 'new';
-  if (daysLeft > 3) return 'healthy';
-  if (daysLeft > 1) return 'fading';
-  return 'critical';
+// Helper: compute drop age state from createdAt timestamp
+export function dropAgeState(createdAt: string): DropAge {
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (ageHours < 6) return 'fresh';
+  if (ageHours < 24) return 'recent';
+  if (ageHours < 72) return 'mid';      // 1–3 days
+  if (ageHours < 168) return 'old';     // 3–7 days
+  return 'stale';                        // > 7 days
 }
 
 export const DROP_AGE_COLOURS: Record<DropAge, string> = {
-  new: '#3b82f6',      // blue-500
-  healthy: '#22c55e',  // green-500
-  fading: '#eab308',   // yellow-500
-  critical: '#ef4444', // red-500
+  fresh: '#FBBBAD',   // soft coral   — newest/hottest drops
+  recent: '#F3CBE8',  // lavender pink — recent drops
+  mid: '#E9C5C2',     // dusty rose    — medium-age drops
+  old: '#F6E9D9',     // warm cream    — older drops
+  stale: '#E9C5C2',   // dusty rose    — fading out (lower opacity applied at render)
 };

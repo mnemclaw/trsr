@@ -66,8 +66,8 @@ function MapWithDrops({ position }: { position: Position }) {
         className="h-screen w-full"
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         />
         <DropMarkers />
         <MapEffects onMapReady={handleMapReady} />
@@ -105,8 +105,8 @@ export default function MapView() {
 
   if (!position) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-slate-900 text-white">
-        <p className="text-slate-400">Loading…</p>
+      <div className="h-screen w-full flex items-center justify-center" style={{ background: 'var(--color-cream)' }}>
+        <p style={{ color: '#888' }}>Loading…</p>
       </div>
     );
   }
@@ -121,8 +121,8 @@ export default function MapView() {
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 3000,
-            background: '#1e293b',
-            color: '#fbbf24',
+            background: 'var(--color-cream)',
+            color: '#1a1a1a',
             borderRadius: '8px',
             padding: '8px 16px',
             fontSize: '13px',

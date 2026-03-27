@@ -62,8 +62,8 @@ function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
     >
       <div
         style={{
-          background: '#1e293b',
-          color: '#f1f5f9',
+          background: 'var(--color-cream)',
+          color: '#1a1a1a',
           borderRadius: '12px',
           padding: '24px',
           width: '100%',
@@ -82,9 +82,9 @@ function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
               rows={4}
               style={{
                 width: '100%',
-                background: '#0f172a',
-                color: '#f1f5f9',
-                border: '1px solid #334155',
+                background: '#fff',
+                color: '#1a1a1a',
+                border: '1px solid #ddd',
                 borderRadius: '8px',
                 padding: '10px',
                 fontSize: '14px',
@@ -105,9 +105,9 @@ function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
               placeholder="Link (optional)"
               style={{
                 width: '100%',
-                background: '#0f172a',
-                color: '#f1f5f9',
-                border: '1px solid #334155',
+                background: '#fff',
+                color: '#1a1a1a',
+                border: '1px solid #ddd',
                 borderRadius: '8px',
                 padding: '10px',
                 fontSize: '14px',
@@ -125,10 +125,10 @@ function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
               type="button"
               onClick={onClose}
               style={{
-                background: '#334155',
+                background: 'var(--color-rose)',
                 border: 'none',
                 borderRadius: '8px',
-                color: '#f1f5f9',
+                color: '#1a1a1a',
                 padding: '10px 20px',
                 cursor: 'pointer',
               }}
@@ -139,10 +139,10 @@ function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
               type="submit"
               disabled={submitting || !text.trim()}
               style={{
-                background: '#3b82f6',
+                background: 'var(--color-lime)',
                 border: 'none',
                 borderRadius: '8px',
-                color: '#fff',
+                color: '#1a1a1a',
                 padding: '10px 20px',
                 cursor: 'pointer',
                 fontWeight: 600,
@@ -184,8 +184,8 @@ export function CreateDropButton({ getMapCenter }: CreateDropButtonProps) {
           width: '56px',
           height: '56px',
           borderRadius: '50%',
-          background: '#3b82f6',
-          color: '#fff',
+          background: 'var(--color-lime)',
+          color: '#1a1a1a',
           border: 'none',
           fontSize: '28px',
           cursor: 'pointer',

@@ -2,3 +2,16 @@
 
 /* Leaflet default styles */
 @import "leaflet/dist/leaflet.css";
+
+/* Twilight palette */
+:root {
+  --color-coral: #FBBBAD;
+  --color-lavender: #F3CBE8;
+  --color-lime: #5CF401;
+  --color-rose: #E9C5C2;
+  --color-cream: #F6E9D9;
+}
+
+body {
+  background: var(--color-cream);
+}

@@ -48,11 +48,12 @@ export function DropCard() {
         left: 0,
         right: 0,
         zIndex: 1000,
-        background: '#1e293b',
-        color: '#f1f5f9',
+        background: 'var(--color-cream)',
+        color: '#1a1a1a',
         padding: '16px',
         borderRadius: '12px 12px 0 0',
-        boxShadow: '0 -4px 24px rgba(0,0,0,0.4)',
+        boxShadow: '0 -4px 24px rgba(0,0,0,0.15)',
+        borderTop: '3px solid var(--color-lime)',
         maxHeight: '40vh',
         overflowY: 'auto',
       }}
@@ -64,7 +65,7 @@ export function DropCard() {
           style={{
             background: 'none',
             border: 'none',
-            color: '#94a3b8',
+            color: '#888',
             fontSize: '20px',
             cursor: 'pointer',
             marginLeft: '12px',
@@ -81,7 +82,7 @@ export function DropCard() {
           href={drop.link}
           target="_blank"
           rel="noopener noreferrer"
-          style={{ color: '#60a5fa', fontSize: '13px', display: 'block', marginTop: '8px' }}
+          style={{ color: 'var(--color-lime)', fontSize: '13px', display: 'block', marginTop: '8px' }}
         >
           {drop.link}
         </a>
@@ -94,7 +95,7 @@ export function DropCard() {
           gap: '12px',
           marginTop: '12px',
           fontSize: '13px',
-          color: '#94a3b8',
+          color: '#888',
         }}
       >
         <span>{formatTimeRemaining(drop.expiresAt)}</span>
@@ -103,10 +104,10 @@ export function DropCard() {
         <button
           onClick={() => void handleVote('up')}
           style={{
-            background: '#22c55e',
+            background: 'var(--color-coral)',
             border: 'none',
             borderRadius: '6px',
-            color: '#fff',
+            color: '#1a1a1a',
             padding: '4px 12px',
             cursor: 'pointer',
             fontWeight: 600,
@@ -117,10 +118,10 @@ export function DropCard() {
         <button
           onClick={() => void handleVote('down')}
           style={{
-            background: '#ef4444',
+            background: 'var(--color-rose)',
             border: 'none',
             borderRadius: '6px',
-            color: '#fff',
+            color: '#1a1a1a',
             padding: '4px 12px',
             cursor: 'pointer',
             fontWeight: 600,
