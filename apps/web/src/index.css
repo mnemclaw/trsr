@@ -75,3 +75,32 @@ body {
     opacity: 0;
   }
 }
+
+/* Treasure markers */
+.treasure-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.4));
+  cursor: pointer;
+  animation: treasure-float 2s ease-in-out infinite;
+  user-select: none;
+}
+
+@keyframes treasure-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+}
+
+.treasure-collect-flash {
+  animation: collect-flash 0.3s ease-out forwards;
+}
+
+@keyframes collect-flash {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}

@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { DropCard } from '../components/DropCard.js';
 import { CreateDropButton } from '../components/CreateDropButton.js';
 import { useDropSocket } from '../hooks/useDropSocket.js';
+import { useTreasureLayer } from '../hooks/useTreasureLayer.js';
 import { useDropsStore } from '../store/drops.js';
 import { fetchDropsInBbox } from '../api/drops.js';
 import { dropAgeState, DROP_AGE_COLOURS } from '@trsr/types';
@@ -71,6 +72,8 @@ export default function MapView() {
   const [locationWarning, setLocationWarning] = useState<string | null>(null);
   const [compassGranted, setCompassGranted] = useState(false);
   const [showCompassButton, setShowCompassButton] = useState(false);
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
 
   // Store
   const drops = useDropsStore((s) => s.drops);
@@ -81,6 +84,13 @@ export default function MapView() {
 
   // Socket (handles drop:created / drop:updated / drop:expired)
   useDropSocket();
+
+  // Treasure layer
+  const { balance, refreshBalance } = useTreasureLayer({
+    lat: userLat,
+    lng: userLng,
+    map: mapRef.current,
+  });
 
   // ---------------------------------------------------------------------------
   // Fetch drops for current map bounds
@@ -200,6 +210,8 @@ export default function MapView() {
           const heading = compassHeadingRef.current ?? pos.coords.heading ?? undefined;
           map.jumpTo({ center: [lng, lat], ...(heading !== undefined && !compassGranted ? { bearing: heading } : {}) });
           userMarkerRef.current?.setLngLat([lng, lat]);
+          setUserLat(lat);
+          setUserLng(lng);
 
           // Show compass button on first GPS fix (iOS needs user gesture)
           if (!compassGranted) {
@@ -372,8 +384,33 @@ export default function MapView() {
       {/* Drop card overlay */}
       <DropCard />
 
+      {/* Treasure balance badge */}
+      <div
+        style={{
+          position: 'fixed',
+          top: '16px',
+          right: '16px',
+          zIndex: 2000,
+          background: 'var(--color-cream)',
+          color: '#1a1a1a',
+          borderRadius: '20px',
+          padding: '6px 14px',
+          fontSize: '14px',
+          fontWeight: 600,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          pointerEvents: 'none',
+          letterSpacing: '0.02em',
+        }}
+      >
+        † {balance}/10
+      </div>
+
       {/* Create drop button */}
-      <CreateDropButton getMapCenter={getMapCenter} />
+      <CreateDropButton
+        getMapCenter={getMapCenter}
+        balance={balance}
+        refreshBalance={refreshBalance}
+      />
     </>
   );
 }

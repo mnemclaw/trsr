@@ -24,6 +24,20 @@ CREATE TABLE IF NOT EXISTS drops (
 CREATE INDEX IF NOT EXISTS drops_lat_lng_idx ON drops (lat, lng) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS drops_expires_at_idx ON drops (expires_at) WHERE status = 'active';
 
+-- Collected treasures (only store what's been collected — generation is deterministic)
+CREATE TABLE IF NOT EXISTS collected_treasures (
+  id TEXT PRIMARY KEY,           -- deterministic ID: "{tile_key}:{day_number}"
+  player_id TEXT NOT NULL,
+  collected_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Player treasure balance
+CREATE TABLE IF NOT EXISTS player_balance (
+  player_id TEXT PRIMARY KEY,
+  treasure_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS votes (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   drop_id      UUID NOT NULL REFERENCES drops(id),

@@ -2,9 +2,12 @@ import { useState, useRef } from 'react';
 import { createDrop } from '../api/drops.js';
 import { useDropsStore } from '../store/drops.js';
 
+const TREASURE_COST = 10;
+
 interface CreateDropModalProps {
   mapCenter: { lat: number; lng: number };
   onClose: () => void;
+  onDropCreated?: () => void;
 }
 
 function getAnonymousUserId(): string {
@@ -17,7 +20,7 @@ function getAnonymousUserId(): string {
   return uid;
 }
 
-function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
+function CreateDropModal({ mapCenter, onClose, onDropCreated }: CreateDropModalProps) {
   const [text, setText] = useState('');
   const [link, setLink] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -38,6 +41,7 @@ function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
         ownerId: getAnonymousUserId(),
       });
       upsertDrop(drop);
+      onDropCreated?.();
       onClose();
     } catch {
       setError('Failed to create drop. Try again.');
@@ -160,46 +164,83 @@ function CreateDropModal({ mapCenter, onClose }: CreateDropModalProps) {
 
 interface CreateDropButtonProps {
   getMapCenter: () => { lat: number; lng: number };
+  balance: number;
+  refreshBalance: () => Promise<void>;
 }
 
-export function CreateDropButton({ getMapCenter }: CreateDropButtonProps) {
+export function CreateDropButton({ getMapCenter, balance, refreshBalance }: CreateDropButtonProps) {
   const [open, setOpen] = useState(false);
   const centerRef = useRef<{ lat: number; lng: number }>({ lat: 0, lng: 0 });
+  const canCreate = balance >= TREASURE_COST;
+  const needed = TREASURE_COST - balance;
 
   function handleOpen() {
+    if (!canCreate) return;
     centerRef.current = getMapCenter();
     setOpen(true);
   }
 
   return (
     <>
-      <button
-        onClick={handleOpen}
-        aria-label="Create drop"
+      <div
         style={{
           position: 'fixed',
           bottom: '24px',
           right: '24px',
           zIndex: 1000,
-          width: '56px',
-          height: '56px',
-          borderRadius: '50%',
-          background: 'var(--color-lime)',
-          color: '#1a1a1a',
-          border: 'none',
-          fontSize: '28px',
-          cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: 'center',
-          lineHeight: 1,
+          gap: '6px',
         }}
       >
-        +
-      </button>
+        {!canCreate && (
+          <div
+            style={{
+              background: 'var(--color-cream)',
+              color: '#1a1a1a',
+              borderRadius: '20px',
+              padding: '4px 10px',
+              fontSize: '12px',
+              fontWeight: 500,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Collect {needed} more †
+          </div>
+        )}
+        <button
+          onClick={handleOpen}
+          disabled={!canCreate}
+          aria-label="Create drop"
+          title={canCreate ? 'Create a drop' : `Collect ${needed} more † to drop`}
+          style={{
+            width: '56px',
+            height: '56px',
+            borderRadius: '50%',
+            background: canCreate ? 'var(--color-lime)' : 'var(--color-rose)',
+            color: '#1a1a1a',
+            border: 'none',
+            fontSize: '28px',
+            cursor: canCreate ? 'pointer' : 'not-allowed',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            lineHeight: 1,
+            opacity: canCreate ? 1 : 0.7,
+          }}
+        >
+          +
+        </button>
+      </div>
       {open && (
-        <CreateDropModal mapCenter={centerRef.current} onClose={() => setOpen(false)} />
+        <CreateDropModal
+          mapCenter={centerRef.current}
+          onClose={() => setOpen(false)}
+          onDropCreated={() => void refreshBalance()}
+        />
       )}
     </>
   );
