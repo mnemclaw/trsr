@@ -83,12 +83,14 @@ body {
   justify-content: center;
   width: 32px;
   height: 32px;
-  font-size: 20px;
+  font-size: 22px;
   line-height: 1;
-  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.4));
+  color: #FFD700;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.7), 0 1px 3px rgba(0,0,0,0.6);
   cursor: pointer;
   animation: treasure-float 2s ease-in-out infinite;
   user-select: none;
+  pointer-events: auto;
 }
 
 @keyframes treasure-float {
