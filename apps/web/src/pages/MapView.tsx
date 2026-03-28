@@ -74,6 +74,7 @@ export default function MapView() {
   const [showCompassButton, setShowCompassButton] = useState(false);
   const [userLat, setUserLat] = useState<number | null>(null);
   const [userLng, setUserLng] = useState<number | null>(null);
+  const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
 
   // Store
   const drops = useDropsStore((s) => s.drops);
@@ -89,7 +90,7 @@ export default function MapView() {
   const { balance, refreshBalance } = useTreasureLayer({
     lat: userLat,
     lng: userLng,
-    map: mapRef.current,
+    map: mapInstance,
   });
 
   // ---------------------------------------------------------------------------
@@ -178,6 +179,7 @@ export default function MapView() {
     });
 
     mapRef.current = map;
+    setMapInstance(map);
 
     map.on('load', () => {
       void fetchDrops(map);
