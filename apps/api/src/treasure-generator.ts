@@ -66,30 +66,90 @@ export function getTilesInRadius(
   return tiles;
 }
 
-// Query Overpass API for building/walkway density in an area
-// Returns density multiplier: buildings > 0.5/km² → 2x, parks/walkways → 0.5x, default 1x
-export async function getOsmDensity(lat: number, lng: number): Promise<number> {
-  const delta = 0.0005; // ~55m box
-  const query = `[out:json][timeout:5];
+// In-memory density cache: tile key → { density, expiresAt }
+const densityCache = new Map<string, { density: number; expiresAt: number }>();
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// Query Overpass API for building/walkway density across an entire area in one request.
+// Called once per /api/treasures request (not per tile).
+// Returns a map of tileKey → density multiplier.
+export async function getOsmDensityMap(
+  tiles: Array<[number, number]>,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const now = Date.now();
+
+  // Separate cached vs uncached tiles
+  const uncached: Array<[number, number]> = [];
+  for (const [tileLat, tileLng] of tiles) {
+    const key = `${tileLat}:${tileLng}`;
+    const cached = densityCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      result.set(key, cached.density);
+    } else {
+      uncached.push([tileLat, tileLng]);
+    }
+  }
+
+  if (uncached.length === 0) return result;
+
+  // Compute bounding box covering all uncached tiles
+  const lats = uncached.map(([lat]) => lat * 0.001);
+  const lngs = uncached.map(([, lng]) => lng * 0.001);
+  const minLat = Math.min(...lats) - 0.001;
+  const maxLat = Math.max(...lats) + 0.002;
+  const minLng = Math.min(...lngs) - 0.001;
+  const maxLng = Math.max(...lngs) + 0.002;
+
+  const query = `[out:json][timeout:10];
 (
-  way["building"](${lat - delta},${lng - delta},${lat + delta},${lng + delta});
-  way["highway"~"footway|path|pedestrian"](${lat - delta},${lng - delta},${lat + delta},${lng + delta});
-  way["leisure"~"park|garden"](${lat - delta},${lng - delta},${lat + delta},${lng + delta});
+  way["building"](${minLat},${minLng},${maxLat},${maxLng});
+  way["highway"~"footway|path|pedestrian"](${minLat},${minLng},${maxLat},${maxLng});
+  way["leisure"~"park|garden"](${minLat},${minLng},${maxLat},${maxLng});
 );
-out count;`;
+out center;`;
 
   try {
     const res = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
       body: 'data=' + encodeURIComponent(query),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(10000),
     });
-    const data = (await res.json()) as { elements?: Array<{ tags?: { total?: number } }> };
-    const total = data?.elements?.[0]?.tags?.total ?? 0;
-    if (total >= 5) return 2; // dense buildings
-    if (total === 0) return 0.5; // nothing → sparse
-    return 1;
+    const data = (await res.json()) as {
+      elements?: Array<{ type: string; center?: { lat: number; lon: number }; tags?: Record<string, string> }>;
+    };
+
+    // Count features per tile
+    const tileCounts = new Map<string, { buildings: number; green: number }>();
+    for (const el of data.elements ?? []) {
+      const center = el.center;
+      if (!center) continue;
+      const tLat = Math.floor(center.lat / 0.001);
+      const tLng = Math.floor(center.lon / 0.001);
+      const key = `${tLat}:${tLng}`;
+      const entry = tileCounts.get(key) ?? { buildings: 0, green: 0 };
+      if (el.tags?.building) entry.buildings++;
+      if (el.tags?.leisure || el.tags?.highway) entry.green++;
+      tileCounts.set(key, entry);
+    }
+
+    for (const [tileLat, tileLng] of uncached) {
+      const key = `${tileLat}:${tileLng}`;
+      const counts = tileCounts.get(key) ?? { buildings: 0, green: 0 };
+      let density = 1;
+      if (counts.buildings >= 3) density = 2;
+      else if (counts.green >= 2) density = 0.5;
+      densityCache.set(key, { density, expiresAt: now + CACHE_TTL_MS });
+      result.set(key, density);
+    }
   } catch {
-    return 1; // default on timeout
+    // Overpass unavailable — use uniform density for all uncached tiles
+    for (const [tileLat, tileLng] of uncached) {
+      const key = `${tileLat}:${tileLng}`;
+      densityCache.set(key, { density: 1, expiresAt: now + CACHE_TTL_MS });
+      result.set(key, 1);
+    }
   }
+
+  return result;
 }
