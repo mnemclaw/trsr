@@ -48,6 +48,17 @@ export async function dropRoutes(fastify: FastifyInstance, opts: { io: Server })
 
     const geohash = ngeohash.encode(lat, lng, 7);
 
+    // Check player has enough treasure to create a drop
+    const balResult = await pool.query(
+      'SELECT treasure_count FROM player_balance WHERE player_id = $1',
+      [ownerId],
+    );
+    const currentBalance =
+      ((balResult.rows as Array<{ treasure_count: number }>)[0]?.treasure_count) ?? 0;
+    if (currentBalance < 10) {
+      return reply.status(402).send({ error: 'Insufficient †', balance: currentBalance });
+    }
+
     await pool.query(
       `INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
       [ownerId],
@@ -58,6 +69,13 @@ export async function dropRoutes(fastify: FastifyInstance, opts: { io: Server })
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [text, link ?? null, imageCid ?? null, lat, lng, geohash, ownerId],
+    );
+
+    // Deduct 10 † from balance
+    await pool.query(
+      `UPDATE player_balance SET treasure_count = treasure_count - 10, updated_at = NOW()
+       WHERE player_id = $1`,
+      [ownerId],
     );
 
     const drop = rowToDrop(result.rows[0] as Record<string, unknown>);

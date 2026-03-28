@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { Server } from 'socket.io';
 import { dropRoutes } from './routes/drops.js';
+import { treasureRoutes } from './routes/treasures.js';
 import { startExpiryJob } from './jobs/expiry.js';
 import { runMigrations } from './migrate.js';
 
@@ -21,6 +22,9 @@ io.on('connection', (socket) => {
 
 // Register drop routes, passing io for socket events
 await fastify.register(dropRoutes, { io });
+
+// Register treasure routes
+await fastify.register(treasureRoutes);
 
 const PORT = Number(process.env['PORT'] ?? 3000);
 await fastify.listen({ port: PORT, host: '0.0.0.0' });
