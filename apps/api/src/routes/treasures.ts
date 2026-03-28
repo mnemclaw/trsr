@@ -3,7 +3,7 @@ import { pool } from '../db.js';
 import {
   getTilesInRadius,
   generateTreasuresForTile,
-  getOsmDensity,
+  getOsmDensityMap,
 } from '../treasure-generator.js';
 
 export async function treasureRoutes(fastify: FastifyInstance) {
@@ -30,9 +30,13 @@ export async function treasureRoutes(fastify: FastifyInstance) {
         (collectedResult.rows as Array<{ id: string }>).map((r) => r.id),
       );
 
+      // Single Overpass request covering the whole area (cached 1h per tile)
+      const densityMap = await getOsmDensityMap(tiles);
+
       const treasures: Array<{ id: string; lat: number; lng: number }> = [];
       for (const [tileLat, tileLng] of tiles) {
-        const density = await getOsmDensity(tileLat * 0.001, tileLng * 0.001);
+        const key = `${tileLat}:${tileLng}`;
+        const density = densityMap.get(key) ?? 1;
         const tileTreasures = generateTreasuresForTile(tileLat, tileLng, dayNumber, density);
         for (const t of tileTreasures) {
           if (!collectedIds.has(t.id)) {
