@@ -94,8 +94,8 @@ body {
 }
 
 @keyframes treasure-float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-4px); }
+  0%, 100% { margin-top: 0px; }
+  50% { margin-top: -4px; }
 }
 
 .treasure-collect-flash {

@@ -179,9 +179,9 @@ export default function MapView() {
     });
 
     mapRef.current = map;
-    setMapInstance(map);
 
     map.on('load', () => {
+      setMapInstance(map);
       void fetchDrops(map);
     });
 
