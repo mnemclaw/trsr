@@ -56,11 +56,37 @@ function markerRadius(drop: Drop): number {
 }
 
 // ---------------------------------------------------------------------------
+// Cone GeoJSON builder
+// ---------------------------------------------------------------------------
+function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM = 10, halfAngleDeg = 30) {
+  // Convert reach from metres to degrees (approximate)
+  const reachLat = reachM / 111000;
+  const reachLng = reachM / (111000 * Math.cos((lat * Math.PI) / 180));
+
+  const steps = 12;
+  const coords: [number, number][] = [[lng, lat]]; // start at player
+  for (let i = -halfAngleDeg; i <= halfAngleDeg; i += (halfAngleDeg * 2) / steps) {
+    const angleDeg = headingDeg + i;
+    const bearingRad = (angleDeg * Math.PI) / 180;
+    const dLat = reachLat * Math.cos(bearingRad);
+    const dLng = reachLng * Math.sin(bearingRad);
+    coords.push([lng + dLng, lat + dLat]);
+  }
+  coords.push([lng, lat]); // close polygon
+  return {
+    type: 'Feature' as const,
+    geometry: { type: 'Polygon' as const, coordinates: [coords] },
+    properties: {},
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function MapView() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const coneMapRef = useRef<maplibregl.Map | null>(null);
 
   // Drop markers: id → Marker
   const dropMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
@@ -68,6 +94,9 @@ export default function MapView() {
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Compass heading from DeviceOrientationEvent (degrees, clockwise from north)
   const compassHeadingRef = useRef<number | null>(null);
+  // Player position refs for use in orientation handler
+  const playerLatRef = useRef<number | null>(null);
+  const playerLngRef = useRef<number | null>(null);
 
   const [locationWarning, setLocationWarning] = useState<string | null>(null);
   const [compassGranted, setCompassGranted] = useState(false);
@@ -87,11 +116,20 @@ export default function MapView() {
   useDropSocket();
 
   // Treasure layer
-  const { balance, refreshBalance } = useTreasureLayer({
+  const { balance, refreshBalance, checkConeCollect } = useTreasureLayer({
     lat: userLat,
     lng: userLng,
+    heading: compassHeadingRef.current,
     map: mapInstance,
   });
+
+  // ---------------------------------------------------------------------------
+  // Cone update helper
+  // ---------------------------------------------------------------------------
+  const updateCone = useCallback((lat: number, lng: number, heading: number) => {
+    const src = coneMapRef.current?.getSource('player-cone') as maplibregl.GeoJSONSource | undefined;
+    src?.setData(buildConeGeoJSON(lat, lng, heading));
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Fetch drops for current map bounds
@@ -133,7 +171,15 @@ export default function MapView() {
     if (map) {
       map.setBearing(heading);
     }
-  }, []);
+
+    // Update cone and check auto-collect when compass updates
+    const lat = playerLatRef.current;
+    const lng = playerLngRef.current;
+    if (lat !== null && lng !== null) {
+      updateCone(lat, lng, heading);
+      checkConeCollect(lat, lng, heading);
+    }
+  }, [updateCone, checkConeCollect]);
 
   const attachCompassListeners = useCallback(() => {
     window.addEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
@@ -179,8 +225,34 @@ export default function MapView() {
     });
 
     mapRef.current = map;
+    coneMapRef.current = map;
 
     map.on('load', () => {
+      // Add cone source and layers
+      map.addSource('player-cone', {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[]] }, properties: {} },
+      });
+      map.addLayer({
+        id: 'player-cone',
+        type: 'fill',
+        source: 'player-cone',
+        paint: {
+          'fill-color': '#4A90E2',
+          'fill-opacity': 0.2,
+        },
+      });
+      map.addLayer({
+        id: 'player-cone-outline',
+        type: 'line',
+        source: 'player-cone',
+        paint: {
+          'line-color': '#4A90E2',
+          'line-opacity': 0.5,
+          'line-width': 1,
+        },
+      });
+
       setMapInstance(map);
       void fetchDrops(map);
     });
@@ -215,6 +287,17 @@ export default function MapView() {
           setUserLat(lat);
           setUserLng(lng);
 
+          // Update player position refs
+          playerLatRef.current = lat;
+          playerLngRef.current = lng;
+
+          // Update cone and check auto-collect on GPS update
+          const currentHeading = compassHeadingRef.current;
+          if (currentHeading !== null) {
+            updateCone(lat, lng, currentHeading);
+            checkConeCollect(lat, lng, currentHeading);
+          }
+
           // Show compass button on first GPS fix (iOS needs user gesture)
           if (!compassGranted) {
             const DOE = DeviceOrientationEvent as unknown as {
@@ -240,6 +323,7 @@ export default function MapView() {
         window.removeEventListener('deviceorientation', handleOrientation as EventListener, true);
         map.remove();
         mapRef.current = null;
+        coneMapRef.current = null;
       };
     }
 
@@ -248,6 +332,7 @@ export default function MapView() {
       window.removeEventListener('deviceorientation', handleOrientation as EventListener, true);
       map.remove();
       mapRef.current = null;
+      coneMapRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

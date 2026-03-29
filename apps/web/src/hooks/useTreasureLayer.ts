@@ -21,29 +21,55 @@ function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number):
   return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
+function bearingTo(fromLat: number, fromLng: number, toLat: number, toLng: number): number {
+  const dLng = (toLng - fromLng) * Math.cos((fromLat * Math.PI) / 180);
+  const dLat = toLat - fromLat;
+  return (Math.atan2(dLng, dLat) * 180 / Math.PI + 360) % 360;
+}
+
+function isInCone(
+  playerLat: number, playerLng: number,
+  heading: number,
+  treasureLat: number, treasureLng: number,
+  reachM = 10, halfAngleDeg = 30
+): boolean {
+  const dist = distanceMeters(playerLat, playerLng, treasureLat, treasureLng);
+  if (dist > reachM) return false;
+  const bearing = bearingTo(playerLat, playerLng, treasureLat, treasureLng);
+  const diff = ((bearing - heading + 540) % 360) - 180;
+  return Math.abs(diff) <= halfAngleDeg;
+}
+
 interface UseTreasureLayerOptions {
   lat: number | null;
   lng: number | null;
+  heading: number | null;
   map: maplibregl.Map | null;
 }
 
 interface UseTreasureLayerResult {
   balance: number;
   refreshBalance: () => Promise<void>;
+  checkConeCollect: (playerLat: number, playerLng: number, heading: number) => void;
 }
 
 export function useTreasureLayer({
   lat,
   lng,
+  heading,
   map,
 }: UseTreasureLayerOptions): UseTreasureLayerResult {
   const [balance, setBalance] = useState<number>(0);
   const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+  const tokenDataRef = useRef<Map<string, { lat: number; lng: number }>>(new Map());
   const playerIdRef = useRef<string>(getAnonymousUserId());
   const lastFetchPosRef = useRef<{ lat: number; lng: number } | null>(null);
   // Keep latest lat/lng in a ref so the interval reads current values without re-creating
   const posRef = useRef<{ lat: number | null; lng: number | null }>({ lat, lng });
   posRef.current = { lat, lng };
+
+  // Silence unused heading warning — heading is used by checkConeCollect caller
+  void heading;
 
   const refreshBalance = useCallback(async () => {
     try {
@@ -53,6 +79,27 @@ export function useTreasureLayer({
       // silently ignore
     }
   }, []);
+
+  const checkConeCollect = useCallback(
+    (playerLat: number, playerLng: number, playerHeading: number) => {
+      for (const [id, data] of tokenDataRef.current.entries()) {
+        if (isInCone(playerLat, playerLng, playerHeading, data.lat, data.lng)) {
+          // Remove from map immediately (optimistic)
+          const marker = markersRef.current.get(id);
+          if (marker) {
+            marker.remove();
+            markersRef.current.delete(id);
+            tokenDataRef.current.delete(id);
+          }
+          // Collect on server
+          collectTreasure(id, playerIdRef.current)
+            .then((result) => setBalance(result.balance))
+            .catch(() => { /* already collected — ignore */ });
+        }
+      }
+    },
+    [],
+  );
 
   const loadTreasures = useCallback(
     async (centerLat: number, centerLng: number, currentMap: maplibregl.Map) => {
@@ -65,6 +112,7 @@ export function useTreasureLayer({
           if (!incomingIds.has(id)) {
             marker.remove();
             markersRef.current.delete(id);
+            tokenDataRef.current.delete(id);
           }
         }
 
@@ -72,30 +120,15 @@ export function useTreasureLayer({
         for (const token of tokens) {
           if (markersRef.current.has(token.id)) continue;
 
+          tokenDataRef.current.set(token.id, { lat: token.lat, lng: token.lng });
+
           const el = document.createElement('div');
-          el.style.cssText = 'width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;';
+          el.style.cssText = 'width:32px;height:32px;display:flex;align-items:center;justify-content:center;pointer-events:none;';
 
           const inner = document.createElement('div');
           inner.className = 'treasure-marker';
           inner.textContent = '†';
           el.appendChild(inner);
-
-          el.addEventListener('click', async () => {
-            inner.classList.add('treasure-collect-flash');
-            try {
-              const result = await collectTreasure(token.id, playerIdRef.current);
-              setBalance(result.balance);
-            } catch {
-              // already collected or error
-            }
-            setTimeout(() => {
-              const m = markersRef.current.get(token.id);
-              if (m) {
-                m.remove();
-                markersRef.current.delete(token.id);
-              }
-            }, 300);
-          });
 
           const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
             .setLngLat([token.lng, token.lat])
@@ -135,6 +168,7 @@ export function useTreasureLayer({
         marker.remove();
       }
       markersRef.current.clear();
+      tokenDataRef.current.clear();
     };
   }, [map, loadTreasures]);
 
@@ -149,5 +183,5 @@ export function useTreasureLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng]);
 
-  return { balance, refreshBalance };
+  return { balance, refreshBalance, checkConeCollect };
 }
