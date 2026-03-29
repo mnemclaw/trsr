@@ -73,11 +73,15 @@ export function useTreasureLayer({
           if (markersRef.current.has(token.id)) continue;
 
           const el = document.createElement('div');
-          el.className = 'treasure-marker';
-          el.textContent = '†';
+          el.style.cssText = 'width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;';
+
+          const inner = document.createElement('div');
+          inner.className = 'treasure-marker';
+          inner.textContent = '†';
+          el.appendChild(inner);
 
           el.addEventListener('click', async () => {
-            el.classList.add('treasure-collect-flash');
+            inner.classList.add('treasure-collect-flash');
             try {
               const result = await collectTreasure(token.id, playerIdRef.current);
               setBalance(result.balance);
@@ -138,7 +142,7 @@ export function useTreasureLayer({
   useEffect(() => {
     if (!map || lat === null || lng === null) return;
     const last = lastFetchPosRef.current;
-    if (last && distanceMeters(last.lat, last.lng, lat, lng) > REFETCH_DISTANCE_M) {
+    if (!last || distanceMeters(last.lat, last.lng, lat, lng) > REFETCH_DISTANCE_M) {
       lastFetchPosRef.current = { lat, lng };
       void loadTreasures(lat, lng, map);
     }
