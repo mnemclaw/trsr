@@ -58,7 +58,7 @@ function markerRadius(drop: Drop): number {
 // ---------------------------------------------------------------------------
 // Cone GeoJSON builder
 // ---------------------------------------------------------------------------
-function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM = 10, halfAngleDeg = 30) {
+function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM = 15, halfAngleDeg = 30) {
   // Convert reach from metres to degrees (approximate)
   const reachLat = reachM / 111000;
   const reachLng = reachM / (111000 * Math.cos((lat * Math.PI) / 180));
@@ -87,6 +87,7 @@ export default function MapView() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const coneMapRef = useRef<maplibregl.Map | null>(null);
+  const lastOrientationTimeRef = useRef<number>(0);
 
   // Drop markers: id → Marker
   const dropMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
@@ -153,6 +154,10 @@ export default function MapView() {
   // Compass handler
   // ---------------------------------------------------------------------------
   const handleOrientation = useCallback((e: DeviceOrientationEvent) => {
+    const now = Date.now();
+    if (now - lastOrientationTimeRef.current < 100) return; // 10Hz max
+    lastOrientationTimeRef.current = now;
+
     const map = mapRef.current;
     // On iOS, webkitCompassHeading gives a true magnetic bearing (0–360, clockwise
     // from north) that works even when stationary.  On Android/other, alpha is

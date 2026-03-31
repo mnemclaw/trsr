@@ -4,6 +4,7 @@ import { fetchTreasures, collectTreasure, fetchPlayerBalance } from '../api/trea
 
 const REFETCH_DISTANCE_M = 150; // only re-fetch when user moves >150m
 const REFETCH_INTERVAL_MS = 60_000;
+const BBOX_DEG = 0.0003; // ~33m bounding-box pre-filter for cone collect
 
 function getAnonymousUserId(): string {
   const key = 'trsr:uid';
@@ -83,6 +84,9 @@ export function useTreasureLayer({
   const checkConeCollect = useCallback(
     (playerLat: number, playerLng: number, playerHeading: number) => {
       for (const [id, data] of tokenDataRef.current.entries()) {
+        // Fast bounding box pre-filter
+        if (Math.abs(data.lat - playerLat) > BBOX_DEG || Math.abs(data.lng - playerLng) > BBOX_DEG) continue;
+        // Full cone check only for nearby tokens
         if (isInCone(playerLat, playerLng, playerHeading, data.lat, data.lng)) {
           // Remove from map immediately (optimistic)
           const marker = markersRef.current.get(id);
