@@ -81,6 +81,20 @@ function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM =
 }
 
 // ---------------------------------------------------------------------------
+// EMA compass smoothing
+// ---------------------------------------------------------------------------
+const ALPHA = 0.15; // smoothing factor — lower = smoother but more lag
+
+function smoothHeading(prev: number | null, next: number): number {
+  if (prev === null) return next;
+  // Handle wrap-around at 0/360
+  let delta = next - prev;
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  return (prev + ALPHA * delta + 360) % 360;
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function MapView() {
@@ -95,6 +109,8 @@ export default function MapView() {
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Compass heading from DeviceOrientationEvent (degrees, clockwise from north)
   const compassHeadingRef = useRef<number | null>(null);
+  // EMA-smoothed heading — used for cone and map bearing
+  const smoothedHeadingRef = useRef<number | null>(null);
   // Tracks which orientation event type is active to prevent double-listener
   const compassListenerTypeRef = useRef<string | null>(null);
   // Whether non-iOS auto-attach has already happened (avoids repeated calls from GPS watch)
@@ -176,17 +192,18 @@ export default function MapView() {
       // Non-iOS: alpha is counterclockwise from arbitrary zero, invert to clockwise
       heading = 360 - e.alpha;
     }
-    compassHeadingRef.current = heading;
+    smoothedHeadingRef.current = smoothHeading(smoothedHeadingRef.current, heading);
+    compassHeadingRef.current = smoothedHeadingRef.current;
     if (map) {
-      map.setBearing(heading);
+      map.setBearing(smoothedHeadingRef.current);
     }
 
     // Update cone and check auto-collect when compass updates
     const lat = playerLatRef.current;
     const lng = playerLngRef.current;
     if (lat !== null && lng !== null) {
-      updateCone(lat, lng, heading);
-      checkConeCollect(lat, lng, heading);
+      updateCone(lat, lng, smoothedHeadingRef.current);
+      checkConeCollect(lat, lng, smoothedHeadingRef.current);
     }
   }, [updateCone, checkConeCollect]);
 
