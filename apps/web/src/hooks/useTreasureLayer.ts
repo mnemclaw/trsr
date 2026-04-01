@@ -4,7 +4,7 @@ import { fetchTreasures, collectTreasure, fetchPlayerBalance } from '../api/trea
 
 const REFETCH_DISTANCE_M = 150; // only re-fetch when user moves >150m
 const REFETCH_INTERVAL_MS = 60_000;
-const BBOX_DEG = 0.0003; // ~33m bounding-box pre-filter for cone collect
+const BBOX_DEG = 0.0006; // ~66m bounding-box pre-filter for cone collect
 
 function getAnonymousUserId(): string {
   const key = 'trsr:uid';
@@ -32,7 +32,7 @@ function isInCone(
   playerLat: number, playerLng: number,
   heading: number,
   treasureLat: number, treasureLng: number,
-  reachM = 10, halfAngleDeg = 30
+  reachM = 20, halfAngleDeg = 30
 ): boolean {
   const dist = distanceMeters(playerLat, playerLng, treasureLat, treasureLng);
   if (dist > reachM) return false;
