@@ -58,7 +58,7 @@ function markerRadius(drop: Drop): number {
 // ---------------------------------------------------------------------------
 // Cone GeoJSON builder
 // ---------------------------------------------------------------------------
-function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM = 15, halfAngleDeg = 30) {
+function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM = 10, halfAngleDeg = 30) {
   // Convert reach from metres to degrees (approximate)
   const reachLat = reachM / 111000;
   const reachLng = reachM / (111000 * Math.cos((lat * Math.PI) / 180));
@@ -319,7 +319,7 @@ export default function MapView() {
           const { latitude: lat, longitude: lng } = pos.coords;
           // Prefer DeviceOrientation compass heading; fall back to GPS travel heading
           const heading = compassHeadingRef.current ?? pos.coords.heading ?? undefined;
-          map.jumpTo({ center: [lng, lat], ...(heading !== undefined && !compassGranted ? { bearing: heading } : {}) });
+          map.jumpTo({ center: [lng, lat], ...(heading !== undefined && compassListenerTypeRef.current === null ? { bearing: heading } : {}) });
           userMarkerRef.current?.setLngLat([lng, lat]);
           setUserLat(lat);
           setUserLng(lng);
