@@ -58,7 +58,7 @@ function markerRadius(drop: Drop): number {
 // ---------------------------------------------------------------------------
 // Cone GeoJSON builder
 // ---------------------------------------------------------------------------
-function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM = 10, halfAngleDeg = 30) {
+function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM = 20, halfAngleDeg = 30) {
   // Convert reach from metres to degrees (approximate)
   const reachLat = reachM / 111000;
   const reachLng = reachM / (111000 * Math.cos((lat * Math.PI) / 180));
@@ -250,7 +250,7 @@ export default function MapView() {
       container: mapContainerRef.current,
       style: RASTER_STYLE,
       center: [DEFAULT_LNG, DEFAULT_LAT],
-      zoom: 17,
+      zoom: 19,
       pitch: 50,
       bearing: 0,
       interactive: false,       // all pan/zoom/rotate disabled — navigation only
@@ -261,6 +261,14 @@ export default function MapView() {
     coneMapRef.current = map;
 
     map.on('load', () => {
+      // Shift map centre upward so player appears in the lower third
+      map.setPadding({
+        top: Math.round(window.innerHeight * 0.45),
+        bottom: 0,
+        left: 0,
+        right: 0,
+      });
+
       // Add cone source and layers
       map.addSource('player-cone', {
         type: 'geojson',
