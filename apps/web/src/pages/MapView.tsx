@@ -95,6 +95,10 @@ export default function MapView() {
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Compass heading from DeviceOrientationEvent (degrees, clockwise from north)
   const compassHeadingRef = useRef<number | null>(null);
+  // Tracks which orientation event type is active to prevent double-listener
+  const compassListenerTypeRef = useRef<string | null>(null);
+  // Whether non-iOS auto-attach has already happened (avoids repeated calls from GPS watch)
+  const compassAutoAttachedRef = useRef<boolean>(false);
   // Player position refs for use in orientation handler
   const playerLatRef = useRef<number | null>(null);
   const playerLngRef = useRef<number | null>(null);
@@ -187,9 +191,33 @@ export default function MapView() {
   }, [updateCone, checkConeCollect]);
 
   const attachCompassListeners = useCallback(() => {
-    window.addEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
-    // Fallback for browsers that only fire 'deviceorientation'
-    window.addEventListener('deviceorientation', handleOrientation as EventListener, true);
+    // Prevent double-registration: only attach one listener type.
+    // Try 'deviceorientationabsolute' first (Android/Chrome). If it fires within
+    // 1 second, keep it. Otherwise fall back to 'deviceorientation' (iOS fires
+    // only this one, and it fires immediately after permission grant).
+    if (compassListenerTypeRef.current !== null) return; // already attached
+
+    let absoluteFired = false;
+    const absoluteProbe = (e: Event) => {
+      absoluteFired = true;
+      window.removeEventListener('deviceorientationabsolute', absoluteProbe, true);
+      // Promote to real handler
+      window.addEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
+      compassListenerTypeRef.current = 'deviceorientationabsolute';
+      (handleOrientation as EventListener)(e);
+    };
+
+    window.addEventListener('deviceorientationabsolute', absoluteProbe, true);
+
+    // After 1s, if absolute never fired, fall back to plain deviceorientation
+    setTimeout(() => {
+      window.removeEventListener('deviceorientationabsolute', absoluteProbe, true);
+      if (!absoluteFired && compassListenerTypeRef.current === null) {
+        window.addEventListener('deviceorientation', handleOrientation as EventListener, true);
+        compassListenerTypeRef.current = 'deviceorientation';
+      }
+    }, 1000);
+
     setCompassGranted(true);
     setShowCompassButton(false);
   }, [handleOrientation]);
@@ -258,6 +286,10 @@ export default function MapView() {
         },
       });
 
+      // Ensure cone layers sit above the raster base tile layer
+      map.moveLayer('player-cone');
+      map.moveLayer('player-cone-outline');
+
       setMapInstance(map);
       void fetchDrops(map);
     });
@@ -303,15 +335,18 @@ export default function MapView() {
             checkConeCollect(lat, lng, currentHeading);
           }
 
-          // Show compass button on first GPS fix (iOS needs user gesture)
-          if (!compassGranted) {
+          // Show compass button on first GPS fix (iOS needs user gesture).
+          // Use compassListenerTypeRef (not compassGranted state) to avoid stale closure.
+          if (compassListenerTypeRef.current === null) {
             const DOE = DeviceOrientationEvent as unknown as {
               requestPermission?: () => Promise<string>;
             };
             if (typeof DOE.requestPermission === 'function') {
+              // iOS: show button once so user can grant permission
               setShowCompassButton(true);
-            } else {
-              // Non-iOS: attach immediately
+            } else if (!compassAutoAttachedRef.current) {
+              // Non-iOS: attach once automatically
+              compassAutoAttachedRef.current = true;
               attachCompassListeners();
             }
           }
@@ -324,8 +359,10 @@ export default function MapView() {
 
       return () => {
         navigator.geolocation.clearWatch(watchId);
-        window.removeEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
-        window.removeEventListener('deviceorientation', handleOrientation as EventListener, true);
+        if (compassListenerTypeRef.current) {
+          window.removeEventListener(compassListenerTypeRef.current, handleOrientation as EventListener, true);
+          compassListenerTypeRef.current = null;
+        }
         map.remove();
         mapRef.current = null;
         coneMapRef.current = null;
@@ -333,8 +370,10 @@ export default function MapView() {
     }
 
     return () => {
-      window.removeEventListener('deviceorientationabsolute', handleOrientation as EventListener, true);
-      window.removeEventListener('deviceorientation', handleOrientation as EventListener, true);
+      if (compassListenerTypeRef.current) {
+        window.removeEventListener(compassListenerTypeRef.current, handleOrientation as EventListener, true);
+        compassListenerTypeRef.current = null;
+      }
       map.remove();
       mapRef.current = null;
       coneMapRef.current = null;
