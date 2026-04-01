@@ -83,7 +83,7 @@ function buildConeGeoJSON(lat: number, lng: number, headingDeg: number, reachM =
 // ---------------------------------------------------------------------------
 // EMA compass smoothing
 // ---------------------------------------------------------------------------
-const ALPHA = 0.15; // smoothing factor — lower = smoother but more lag
+const ALPHA = 0.3; // smoothing factor — lower = smoother but more lag
 
 function smoothHeading(prev: number | null, next: number): number {
   if (prev === null) return next;
@@ -195,7 +195,7 @@ export default function MapView() {
     smoothedHeadingRef.current = smoothHeading(smoothedHeadingRef.current, heading);
     compassHeadingRef.current = smoothedHeadingRef.current;
     if (map) {
-      map.setBearing(smoothedHeadingRef.current);
+      map.easeTo({ bearing: smoothedHeadingRef.current, duration: 80, easing: (t) => t });
     }
 
     // Update cone and check auto-collect when compass updates
