@@ -2,6 +2,7 @@ import { createRequire } from 'module';
 import type { FastifyInstance } from 'fastify';
 import type { Server } from 'socket.io';
 import { pool } from '../db.js';
+import { isInsideBuilding } from '../geo.js';
 import type { Drop, BboxQuery } from '@trsr/types';
 
 const require = createRequire(import.meta.url);
@@ -44,6 +45,13 @@ export async function dropRoutes(fastify: FastifyInstance, opts: { io: Server })
     }
     if (typeof lng !== 'number' || isNaN(lng) || lng < -180 || lng > 180) {
       return reply.status(400).send({ error: 'invalid lng' });
+    }
+
+    const insideBuilding = await isInsideBuilding(lat, lng);
+    if (insideBuilding) {
+      return reply.status(422).send({
+        error: 'Drops must be placed in streets, parks, or open spaces — not inside buildings.',
+      });
     }
 
     const geohash = ngeohash.encode(lat, lng, 7);
