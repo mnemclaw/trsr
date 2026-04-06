@@ -19,11 +19,14 @@ export async function fetchTreasures(lat: number, lng: number): Promise<Treasure
 export async function collectTreasure(
   id: string,
   playerId: string,
+  lat: number,
+  lng: number,
+  dayNumber: number,
 ): Promise<{ balance: number }> {
   const res = await fetch(`${API}/api/treasures/${encodeURIComponent(id)}/collect`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId }),
+    body: JSON.stringify({ playerId, lat, lng, dayNumber }),
     signal: AbortSignal.timeout(10_000),
   });
   if (res.status === 409) {
