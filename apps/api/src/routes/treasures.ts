@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db.js';
 import {
-  getTilesInRadius,
-  generateTreasuresForTile,
-  getOsmDensityMap,
+  getBoundingBox,
+  getOsmWalkableNodes,
+  generateTreasuresFromNodes,
+  generateTreasuresFallback,
 } from '../treasure-generator.js';
 
 export async function treasureRoutes(fastify: FastifyInstance) {
@@ -20,9 +21,18 @@ export async function treasureRoutes(fastify: FastifyInstance) {
       }
 
       const dayNumber = Math.floor(Date.now() / 86400000);
-      const tiles = getTilesInRadius(centerLat, centerLng, 1000);
+      const bbox = getBoundingBox(centerLat, centerLng, 1000);
 
-      // Get collected IDs for today
+      // Get walkable OSM nodes in area (cached 1h per bbox key)
+      const nodes = await getOsmWalkableNodes(bbox);
+
+      // Generate candidate treasure positions
+      const candidates =
+        nodes.length > 0
+          ? generateTreasuresFromNodes(nodes, dayNumber)
+          : generateTreasuresFallback(bbox, dayNumber);
+
+      // Filter out treasures collected within the last 24 hours
       const collectedResult = await pool.query(
         "SELECT id FROM collected_treasures WHERE collected_at >= NOW() - INTERVAL '24 hours'",
       );
@@ -30,20 +40,7 @@ export async function treasureRoutes(fastify: FastifyInstance) {
         (collectedResult.rows as Array<{ id: string }>).map((r) => r.id),
       );
 
-      // Single Overpass request covering the whole area (cached 1h per tile)
-      const densityMap = await getOsmDensityMap(tiles);
-
-      const treasures: Array<{ id: string; lat: number; lng: number }> = [];
-      for (const [tileLat, tileLng] of tiles) {
-        const key = `${tileLat}:${tileLng}`;
-        const density = densityMap.get(key) ?? 1;
-        const tileTreasures = generateTreasuresForTile(tileLat, tileLng, dayNumber, density);
-        for (const t of tileTreasures) {
-          if (!collectedIds.has(t.id)) {
-            treasures.push(t);
-          }
-        }
-      }
+      const treasures = candidates.filter((t) => !collectedIds.has(t.id));
 
       return reply.send({ treasures });
     },
@@ -52,13 +49,62 @@ export async function treasureRoutes(fastify: FastifyInstance) {
   // POST /api/treasures/:id/collect — collect a treasure
   fastify.post<{
     Params: { id: string };
-    Body: { playerId: string };
+    Body: { playerId: string; lat: number; lng: number; dayNumber: number };
   }>('/api/treasures/:id/collect', async (request, reply) => {
     const { id } = request.params;
-    const { playerId } = request.body;
+    const { playerId, lat, lng, dayNumber } = request.body;
 
     if (!playerId) {
       return reply.status(400).send({ error: 'playerId is required' });
+    }
+    if (lat === undefined || lng === undefined || dayNumber === undefined) {
+      return reply.status(400).send({ error: 'lat, lng, and dayNumber are required' });
+    }
+
+    // Anti-cheat: validate the treasure ID matches what would be generated
+    // for the player's reported position/day. Only applies to osm: IDs.
+    if (id.startsWith('osm:')) {
+      const parts = id.split(':');
+      const claimedNodeIndex = parseInt(parts[1] ?? '', 10);
+      const claimedDay = parseInt(parts[2] ?? '', 10);
+
+      if (isNaN(claimedNodeIndex) || isNaN(claimedDay)) {
+        return reply.status(400).send({ error: 'invalid treasure id' });
+      }
+
+      // Day must match today or yesterday (allow small clock drift)
+      const today = Math.floor(Date.now() / 86400000);
+      if (claimedDay !== today && claimedDay !== today - 1) {
+        return reply.status(400).send({ error: 'treasure has expired' });
+      }
+
+      // Verify the node at claimedNodeIndex is within 200m of reported position
+      // by regenerating the node pool for the player's area
+      const bbox = getBoundingBox(lat, lng, 1200); // slightly larger to account for edge cases
+      const nodes = await getOsmWalkableNodes(bbox);
+      if (nodes.length > 0) {
+        const node = nodes[claimedNodeIndex];
+        if (!node) {
+          return reply.status(400).send({ error: 'invalid treasure node index' });
+        }
+        const dLat = node.lat - lat;
+        const dLng = (node.lng - lng) * Math.cos((lat * Math.PI) / 180);
+        const distanceMeters = Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
+        if (distanceMeters > 200) {
+          return reply.status(400).send({ error: 'treasure position too far from player' });
+        }
+      }
+      // If nodes array is empty (Overpass unavailable), skip distance check
+    } else if (id.startsWith('fallback:')) {
+      // Validate fallback ID format: fallback:{dayNumber}:{i}
+      const parts = id.split(':');
+      const claimedDay = parseInt(parts[1] ?? '', 10);
+      const today = Math.floor(Date.now() / 86400000);
+      if (isNaN(claimedDay) || (claimedDay !== today && claimedDay !== today - 1)) {
+        return reply.status(400).send({ error: 'treasure has expired' });
+      }
+    } else {
+      return reply.status(400).send({ error: 'invalid treasure id format' });
     }
 
     // Idempotency check
