@@ -1,5 +1,5 @@
 // Deterministic PRNG — mulberry32
-function mulberry32(seed: number) {
+export function mulberry32(seed: number) {
   return function () {
     seed |= 0;
     seed = (seed + 0x6d2b79f5) | 0;
@@ -9,7 +9,7 @@ function mulberry32(seed: number) {
   };
 }
 
-function hashString(s: string): number {
+export function hashString(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h = Math.imul(h ^ s.charCodeAt(i), 16777619);
@@ -17,139 +17,185 @@ function hashString(s: string): number {
   return h >>> 0;
 }
 
-// Generate treasure positions for a given lat/lng tile and day
-// tile = 0.001 degree grid (~111m per tile at equator)
-export function generateTreasuresForTile(
-  tileLat: number, // floor(lat / 0.001)
-  tileLng: number, // floor(lng / 0.001)
-  dayNumber: number, // Math.floor(Date.now() / 86400000)
-  density: number = 1, // 1 = normal, 2 = double (buildings), 0.5 = parks/walkways
-): Array<{ id: string; lat: number; lng: number }> {
-  const tileKey = `${tileLat}:${tileLng}`;
-  const seed = hashString(`${tileKey}:${dayNumber}`);
-  const rng = mulberry32(seed);
-
-  // Base count: density * ~3 per tile on average
-  const count = Math.floor(rng() * density * 4) + Math.floor(density);
-
-  const results = [];
-  for (let i = 0; i < count; i++) {
-    const lat = (tileLat + rng()) * 0.001;
-    const lng = (tileLng + rng()) * 0.001;
-    const id = `${tileKey}:${dayNumber}:${i}`;
-    results.push({ id, lat, lng });
-  }
-  return results;
+export interface OsmNode {
+  lat: number;
+  lng: number;
 }
 
-// Get all tiles within radius meters of a center point
-export function getTilesInRadius(
+export interface BoundingBox {
+  minLat: number;
+  maxLat: number;
+  minLng: number;
+  maxLng: number;
+}
+
+// Compute bounding box ~radiusMeters around a center point
+export function getBoundingBox(
   centerLat: number,
   centerLng: number,
   radiusMeters = 1000,
-): Array<[number, number]> {
+): BoundingBox {
   const latDelta = radiusMeters / 111000;
   const lngDelta = radiusMeters / (111000 * Math.cos((centerLat * Math.PI) / 180));
-  const tileSize = 0.001;
-
-  const tiles: Array<[number, number]> = [];
-  for (let lat = centerLat - latDelta; lat <= centerLat + latDelta; lat += tileSize) {
-    for (let lng = centerLng - lngDelta; lng <= centerLng + lngDelta; lng += tileSize) {
-      // Only include tiles within actual radius
-      const dLat = lat - centerLat;
-      const dLng = (lng - centerLng) * Math.cos((centerLat * Math.PI) / 180);
-      if (Math.sqrt(dLat * dLat + dLng * dLng) * 111000 <= radiusMeters) {
-        tiles.push([Math.floor(lat / tileSize), Math.floor(lng / tileSize)]);
-      }
-    }
-  }
-  return tiles;
+  return {
+    minLat: centerLat - latDelta,
+    maxLat: centerLat + latDelta,
+    minLng: centerLng - lngDelta,
+    maxLng: centerLng + lngDelta,
+  };
 }
 
-// In-memory density cache: tile key → { density, expiresAt }
-const densityCache = new Map<string, { density: number; expiresAt: number }>();
+// Deduplicate nodes within ~5m proximity (0.00005 degrees ≈ 5.5m)
+function deduplicateNodes(nodes: OsmNode[], thresholdDeg = 0.00005): OsmNode[] {
+  const out: OsmNode[] = [];
+  for (const node of nodes) {
+    let duplicate = false;
+    for (const existing of out) {
+      if (
+        Math.abs(node.lat - existing.lat) < thresholdDeg &&
+        Math.abs(node.lng - existing.lng) < thresholdDeg
+      ) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (!duplicate) out.push(node);
+  }
+  return out;
+}
+
+// In-memory node cache: bounding-box key → { nodes, expiresAt }
+const nodeCache = new Map<string, { nodes: OsmNode[]; expiresAt: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-// Query Overpass API for building/walkway density across an entire area in one request.
-// Called once per /api/treasures request (not per tile).
-// Returns a map of tileKey → density multiplier.
-export async function getOsmDensityMap(
-  tiles: Array<[number, number]>,
-): Promise<Map<string, number>> {
-  const result = new Map<string, number>();
+function bboxKey(bbox: BoundingBox): string {
+  // Round to 3 decimal places (~111m) to allow cache reuse for nearby positions
+  return [
+    bbox.minLat.toFixed(3),
+    bbox.maxLat.toFixed(3),
+    bbox.minLng.toFixed(3),
+    bbox.maxLng.toFixed(3),
+  ].join(':');
+}
+
+/**
+ * Fetch walkable OSM nodes within a bounding box from Overpass.
+ * Returns an array of deduplicated { lat, lng } points on walkable ground.
+ * Results are cached 1 hour per bounding box key.
+ */
+export async function getOsmWalkableNodes(bbox: BoundingBox): Promise<OsmNode[]> {
+  const key = bboxKey(bbox);
   const now = Date.now();
 
-  // Separate cached vs uncached tiles
-  const uncached: Array<[number, number]> = [];
-  for (const [tileLat, tileLng] of tiles) {
-    const key = `${tileLat}:${tileLng}`;
-    const cached = densityCache.get(key);
-    if (cached && cached.expiresAt > now) {
-      result.set(key, cached.density);
-    } else {
-      uncached.push([tileLat, tileLng]);
-    }
+  const cached = nodeCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.nodes;
   }
 
-  if (uncached.length === 0) return result;
+  const { minLat, maxLat, minLng, maxLng } = bbox;
+  const b = `${minLat},${minLng},${maxLat},${maxLng}`;
 
-  // Compute bounding box covering all uncached tiles
-  const lats = uncached.map(([lat]) => lat * 0.001);
-  const lngs = uncached.map(([, lng]) => lng * 0.001);
-  const minLat = Math.min(...lats) - 0.001;
-  const maxLat = Math.max(...lats) + 0.002;
-  const minLng = Math.min(...lngs) - 0.001;
-  const maxLng = Math.max(...lngs) + 0.002;
-
-  const query = `[out:json][timeout:10];
+  // Query walkable nodes: standalone highway nodes + nodes of walkable ways + park/green ways
+  const query = `[out:json][timeout:15];
 (
-  way["building"](${minLat},${minLng},${maxLat},${maxLng});
-  way["highway"~"footway|path|pedestrian"](${minLat},${minLng},${maxLat},${maxLng});
-  way["leisure"~"park|garden"](${minLat},${minLng},${maxLat},${maxLng});
+  node["highway"~"^(footway|path|pedestrian|steps|crossing|street_lamp)$"](${b});
+  node(w["highway"~"^(footway|path|pedestrian|residential|living_street|service|unclassified)$"])(${b});
+  node(w["leisure"~"^(park|garden|playground|pitch)$"])(${b});
+  node(w["landuse"~"^(grass|recreation_ground|village_green)$"])(${b});
 );
-out center;`;
+out body;`;
 
   try {
     const res = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
       body: 'data=' + encodeURIComponent(query),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
+
     const data = (await res.json()) as {
-      elements?: Array<{ type: string; center?: { lat: number; lon: number }; tags?: Record<string, string> }>;
+      elements?: Array<{ type: string; lat?: number; lon?: number }>;
     };
 
-    // Count features per tile
-    const tileCounts = new Map<string, { buildings: number; green: number }>();
+    const rawNodes: OsmNode[] = [];
     for (const el of data.elements ?? []) {
-      const center = el.center;
-      if (!center) continue;
-      const tLat = Math.floor(center.lat / 0.001);
-      const tLng = Math.floor(center.lon / 0.001);
-      const key = `${tLat}:${tLng}`;
-      const entry = tileCounts.get(key) ?? { buildings: 0, green: 0 };
-      if (el.tags?.building) entry.buildings++;
-      if (el.tags?.leisure || el.tags?.highway) entry.green++;
-      tileCounts.set(key, entry);
+      if (el.type === 'node' && el.lat !== undefined && el.lon !== undefined) {
+        rawNodes.push({ lat: el.lat, lng: el.lon });
+      }
     }
 
-    for (const [tileLat, tileLng] of uncached) {
-      const key = `${tileLat}:${tileLng}`;
-      const counts = tileCounts.get(key) ?? { buildings: 0, green: 0 };
-      let density = 1;
-      if (counts.buildings >= 3) density = 2;
-      else if (counts.green >= 2) density = 0.5;
-      densityCache.set(key, { density, expiresAt: now + CACHE_TTL_MS });
-      result.set(key, density);
-    }
+    const nodes = deduplicateNodes(rawNodes);
+    nodeCache.set(key, { nodes, expiresAt: now + CACHE_TTL_MS });
+    return nodes;
   } catch {
-    // Overpass unavailable — use uniform density for all uncached tiles
-    for (const [tileLat, tileLng] of uncached) {
-      const key = `${tileLat}:${tileLng}`;
-      densityCache.set(key, { density: 1, expiresAt: now + CACHE_TTL_MS });
-      result.set(key, 1);
-    }
+    // Overpass unavailable — return empty (caller falls back to random positioning)
+    nodeCache.set(key, { nodes: [], expiresAt: now + CACHE_TTL_MS });
+    return [];
+  }
+}
+
+// Constants for treasure generation
+const NODES_PER_TREASURE = 15; // 1 treasure per 15 walkable nodes
+const MAX_TREASURES_PER_REQUEST = 50;
+
+/**
+ * Deterministically select treasure positions from OSM walkable nodes.
+ * Uses mulberry32 PRNG seeded from dayNumber for day-stable placement.
+ * Each position gets a stable ID: `osm:{nodeIndex}:{dayNumber}`.
+ *
+ * @param nodes - Array of walkable OSM nodes in the area
+ * @param dayNumber - Math.floor(Date.now() / 86400000) — rotates daily
+ * @returns Array of treasure positions with stable IDs
+ */
+export function generateTreasuresFromNodes(
+  nodes: OsmNode[],
+  dayNumber: number,
+): Array<{ id: string; lat: number; lng: number }> {
+  if (nodes.length === 0) return [];
+
+  const seed = hashString(`osm-treasures:${dayNumber}`);
+  const rng = mulberry32(seed);
+
+  // Shuffle node indices deterministically
+  const indices = Array.from({ length: nodes.length }, (_, i) => i);
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [indices[i], indices[j]] = [indices[j]!, indices[i]!];
   }
 
-  return result;
+  const count = Math.min(
+    Math.floor(nodes.length / NODES_PER_TREASURE),
+    MAX_TREASURES_PER_REQUEST,
+  );
+
+  const results: Array<{ id: string; lat: number; lng: number }> = [];
+  for (let i = 0; i < count; i++) {
+    const nodeIndex = indices[i]!;
+    const node = nodes[nodeIndex]!;
+    results.push({
+      id: `osm:${nodeIndex}:${dayNumber}`,
+      lat: node.lat,
+      lng: node.lng,
+    });
+  }
+  return results;
+}
+
+/**
+ * Fallback: generate treasures at random positions within a bounding box.
+ * Used when Overpass returns no nodes (offline / sparse area).
+ */
+export function generateTreasuresFallback(
+  bbox: BoundingBox,
+  dayNumber: number,
+): Array<{ id: string; lat: number; lng: number }> {
+  const seed = hashString(`fallback:${bbox.minLat.toFixed(3)}:${bbox.minLng.toFixed(3)}:${dayNumber}`);
+  const rng = mulberry32(seed);
+  const count = 5 + Math.floor(rng() * 5); // 5–9 fallback treasures
+  const results = [];
+  for (let i = 0; i < count; i++) {
+    const lat = bbox.minLat + rng() * (bbox.maxLat - bbox.minLat);
+    const lng = bbox.minLng + rng() * (bbox.maxLng - bbox.minLng);
+    results.push({ id: `fallback:${dayNumber}:${i}`, lat, lng });
+  }
+  return results;
 }
