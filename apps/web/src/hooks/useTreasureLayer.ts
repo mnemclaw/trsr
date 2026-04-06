@@ -96,7 +96,7 @@ export function useTreasureLayer({
             tokenDataRef.current.delete(id);
           }
           // Collect on server
-          collectTreasure(id, playerIdRef.current)
+          collectTreasure(id, playerIdRef.current, playerLat, playerLng, Math.floor(Date.now() / 86400000))
             .then((result) => setBalance(result.balance))
             .catch(() => { /* already collected — ignore */ });
         }

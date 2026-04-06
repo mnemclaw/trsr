@@ -27,10 +27,12 @@ export async function treasureRoutes(fastify: FastifyInstance) {
       const nodes = await getOsmWalkableNodes(bbox);
 
       // Generate candidate treasure positions
+      // Fallback uses a tighter 300m bbox so treasures stay near the player
+      const fallbackBbox = getBoundingBox(centerLat, centerLng, 300);
       const candidates =
         nodes.length > 0
           ? generateTreasuresFromNodes(nodes, dayNumber)
-          : generateTreasuresFallback(bbox, dayNumber);
+          : generateTreasuresFallback(fallbackBbox, dayNumber);
 
       // Filter out treasures collected within the last 24 hours
       const collectedResult = await pool.query(

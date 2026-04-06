@@ -139,9 +139,9 @@ describe('generateTreasuresFromNodes', () => {
 describe('generateTreasuresFallback', () => {
   const bbox = { minLat: 51.49, maxLat: 51.51, minLng: 0.09, maxLng: 0.11 };
 
-  it('returns 5–9 treasures', () => {
+  it('returns 12–18 treasures', () => {
     const result = generateTreasuresFallback(bbox, 20000);
-    assert.ok(result.length >= 5 && result.length <= 9, `Got ${result.length}`);
+    assert.ok(result.length >= 12 && result.length <= 18, `Got ${result.length}`);
   });
 
   it('all positions are within the bbox', () => {

@@ -105,32 +105,44 @@ export async function getOsmWalkableNodes(bbox: BoundingBox): Promise<OsmNode[]>
 );
 out body;`;
 
-  try {
-    const res = await fetch('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      body: 'data=' + encodeURIComponent(query),
-      signal: AbortSignal.timeout(15000),
-    });
+  const OVERPASS_ENDPOINTS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+  ];
 
-    const data = (await res.json()) as {
-      elements?: Array<{ type: string; lat?: number; lon?: number }>;
-    };
-
-    const rawNodes: OsmNode[] = [];
-    for (const el of data.elements ?? []) {
-      if (el.type === 'node' && el.lat !== undefined && el.lon !== undefined) {
-        rawNodes.push({ lat: el.lat, lng: el.lon });
+  async function tryEndpoint(url: string): Promise<OsmNode[] | null> {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = (await res.json()) as {
+        elements?: Array<{ type: string; lat?: number; lon?: number }>;
+      };
+      const rawNodes: OsmNode[] = [];
+      for (const el of data.elements ?? []) {
+        if (el.type === 'node' && el.lat !== undefined && el.lon !== undefined) {
+          rawNodes.push({ lat: el.lat, lng: el.lon });
+        }
       }
+      return deduplicateNodes(rawNodes);
+    } catch {
+      return null;
     }
-
-    const nodes = deduplicateNodes(rawNodes);
-    nodeCache.set(key, { nodes, expiresAt: now + CACHE_TTL_MS });
-    return nodes;
-  } catch {
-    // Overpass unavailable — return empty (caller falls back to random positioning)
-    nodeCache.set(key, { nodes: [], expiresAt: now + CACHE_TTL_MS });
-    return [];
   }
+
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    const nodes = await tryEndpoint(endpoint);
+    if (nodes !== null && nodes.length > 0) {
+      nodeCache.set(key, { nodes, expiresAt: now + CACHE_TTL_MS });
+      return nodes;
+    }
+  }
+
+  // All endpoints failed or returned no nodes — caller uses fallback
+  nodeCache.set(key, { nodes: [], expiresAt: now + CACHE_TTL_MS });
+  return [];
 }
 
 // Constants for treasure generation
@@ -184,13 +196,19 @@ export function generateTreasuresFromNodes(
  * Fallback: generate treasures at random positions within a bounding box.
  * Used when Overpass returns no nodes (offline / sparse area).
  */
+/**
+ * Fallback: generate treasures at random positions within a bounding box.
+ * Used when Overpass returns no nodes (offline / sparse area).
+ * @param bbox - Bounding box to scatter treasures within (use a small radius ~300m)
+ * @param dayNumber - Math.floor(Date.now() / 86400000) — rotates daily
+ */
 export function generateTreasuresFallback(
   bbox: BoundingBox,
   dayNumber: number,
 ): Array<{ id: string; lat: number; lng: number }> {
   const seed = hashString(`fallback:${bbox.minLat.toFixed(3)}:${bbox.minLng.toFixed(3)}:${dayNumber}`);
   const rng = mulberry32(seed);
-  const count = 5 + Math.floor(rng() * 5); // 5–9 fallback treasures
+  const count = 12 + Math.floor(rng() * 7); // 12–18 fallback treasures
   const results = [];
   for (let i = 0; i < count; i++) {
     const lat = bbox.minLat + rng() * (bbox.maxLat - bbox.minLat);
